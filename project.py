@@ -1,27 +1,21 @@
 class MySQL:
     def __init__(self, a):
         self.a = a
+
     def Display(self):
-        query = "select* from {0}".format(self.a)
+        query = "query = select ID, NAME, PRICE, REVIEW.rating from " + self.a + ", REVIEW where ID = code"
         cur.execute(query)
         bK = cur.fetchall()
         if len(bK) == 0:
             print("No Data is Present Here.Insert Some Data.")
         else:
-            print(Fore.CYAN + Style.BRIGHT + "|- - - - - - - - - - - - - - - - - - - - - - - - - - -|")
-            print("|  CODE |         ITEM NAME                 |PRICE(Rs)|")
-            print("|- - - -| - - - - - - - - - - - - - - - - - |- - - - -|")
             cur.execute(query)
+            table = prettytable.PrettyTable(["Code", "Name", "Price", "Rating"])
             for data in cur.fetchall():
-                if len(str(data[2])) == 2:
-                    print('|'.ljust(2), str(data[0]).ljust(4), '|', data[1].ljust(33), '|'.ljust(2), " ",
-                          str(data[2]).rjust(1), '', ' |')
-                else:
-                    print('|'.ljust(2), str(data[0]).ljust(4), '|', data[1].ljust(33), '|'.ljust(3),
-                          str(data[2]).rjust(1),
-                          '  |')
-            print("|- - - - - - - - - - - - - - - - - - - - - - - - - - -|")
+                table.add_row([data[0], data[1], data[2], data[3]])
+            print(table)
         db.commit()
+
     def Insertion(self):
         self.Display()
         l, m = [], []
@@ -49,6 +43,7 @@ class MySQL:
             self.Display()
         except ValueError:
             print(Fore.RED + Style.BRIGHT + "You Have Entered WRONG Choice.Try Again......" + Style.RESET_ALL)
+
     def Updater(self):
         cur.execute("select * from " + self.a)
         bK = cur.fetchall()
@@ -83,6 +78,7 @@ class MySQL:
                 print("ID Repeated , Can't update the Record.Try Again......")
             self.Display()
         db.commit()
+
     def Deletion(self):
         self.Display()
         l, m = [], []
@@ -113,93 +109,114 @@ class MySQL:
                 self.Display()
             except ValueError:
                 print(Fore.RED + Style.BRIGHT + "You Have Entered WRONG Choice.Try Again......" + Style.RESET_ALL)
+
     def Executor(self, i, j, k):  # Function to execute query
         query = "create table if not exists " + self.a + "(\nID int(3) unique not null,\nNAME varchar(50),\nPRICE int(3))"
         cur.execute(query)
-        cur.execute(("insert IGNORE into " + self.a + "(ID,NAME,PRICE) values({},'{}',{})").format(i, j, k))
+        cur.execute(
+            ("insert IGNORE into " + self.a + "(ID,NAME,PRICE) values({},'{}',{})").format(i, j, k))
+        cur.execute("insert IGNORE into REVIEW(code, TotalCustomer, Rating) values({}, {}, {})".format(i, 0, 0))
+
+
 def installer():
     import os
     os.system('cmd/c"pip install colorama"')
     os.system('cmd/c"pip install progressbar"')
+
+
 def repeater(a):
     global keys
     global values
-    query = "select * from " + a
+    query = "select ID, NAME, PRICE, REVIEW.rating from " + a + ", REVIEW where ID = code"
     cur.execute(query)
-    print(Fore.CYAN + Style.BRIGHT + "|- - - - - - - - - - - - - - - - - - - - - - - - - - - |")
-    print("|  CODE |         ITEM NAME                 | PRICE(Rs)|")
-    print("|- - - -| - - - - - - - - - - - - - - - - - |- - - - - |")
+    table = prettytable.PrettyTable(["Code", "Name", "Price", "Rating"])
     for data in cur.fetchall():
-        if len(str(data[2])) == 2:
-            print('|'.ljust(2), str(data[0]).ljust(4), '|', data[1].ljust(33), '|'.ljust(3), "", data[2], ' |'.rjust(4))
-        else:
-            print('|'.ljust(2), str(data[0]).ljust(4), '|', data[1].ljust(33), '|'.ljust(2), "", data[2], '|'.rjust(4))
+        table.add_row([data[0], data[1], data[2], data[3]])
         keys.append(data[1])
         values.append(data[2])
-    print("|- - - - - - - - - - - - - - - - - - - - - - - - - - - |")
+        values.append(data[2])
+    print(Fore.CYAN + '')
+    print(table)
     print("what do you want to order from above?")
-def Repeater(i):
+
+
+def Repeater(i, Code):
     global bK
     global BV
     global keys
     global values
     global sum1
+    global rv
     global qty
+    global orderCode
+    global code
     q = input("Enter quantity of Your Order you want to have:")
     qty.append(q)
-    print(Fore.CYAN + Style.BRIGHT + "You just ordered!!!")
-    print(keys[i], ":Rs", values[i])
-    sum1 += (int(q) * (int(values[i])))
+    review = int(input("Review this item out of 5:-"))
+    rv.append(review)
+    orderCode += (Code + ',')
     bK.append(keys[i])
     BV.append(values[i])
+    code.append(Code)
+    query = "select TotalCustomer, Rating from Review where code = " + z
+    cur.execute(query)
+    rating = 0
+    for data in cur.fetchall():
+        totalCust = int(data[0])
+        totalCust += 1
+        rating = (float(data[1]) + review)/totalCust
+    query = "update Review Set Rating = {} where code = {}".format(rating, z)
+    cur.execute(query)
     print("do u want to order anything else?")
-def LOADING(bK):  # Function to load the  Data
+
+def LOADING(bK):  # Function to load the Data
     progress = progressbar.ProgressBar()
     for i in progress(range(80)):
         time.sleep(bK)
+
+
 def BILLER(name):
-    if len(bK) > 0 and len(BV) > 0:
+    global sum1
+    if 0 < len(bK) == len(BV):
         if len(name) == 0:
             billno = 'u0000'
         else:
-            no = id(name)
+            no = id(name) + random.randrange(-10000, 10000)
             billno = str(no)[0:8]
         print("BILLNO.   :", billno, "\tCUSTOMER's NAME:", name)
         print(Fore.GREEN + Style.BRIGHT + "YOUR BILL")
-        print("| - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -|")
-        print("|", "Sr.No.".ljust(12), "|".ljust(5), "THINGS YOU ORDERED".ljust(33), "|", "PRICE(Rs)|", "QUANTITY", "|",
-              "AMOUNT|")
-        print("| - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -|")
+        table = prettytable.PrettyTable(["Sr.No", "THINGS YOU ORDERED", "PRICE(Rs)", "QUANTITY", "AMOUNT"])
         for i in range(0, len(bK)):
-            if len(str(BV[i])) == 2:
-                print("|", "(", i + 1, ")".ljust(8), "|".ljust(5), bK[i].ljust(33), "|".ljust(4), "",
-                      str(BV[i]).rjust(4), "|".ljust(4), qty[i].rjust(5), "| ", str(BV[i] * int(qty[i])).rjust(3), " |")
-            else:
-                print("|", "(", i + 1, ")".ljust(8), "|".ljust(5), bK[i].ljust(33), "|".ljust(4), "",
-                      str(BV[i]).rjust(4), "|".ljust(4), qty[i].rjust(5), "| ", str(BV[i] * int(qty[i])).rjust(3), " |")
-        print("| - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -|")
-        if len(str(sum1)) == 4:
-            print("|".ljust(14), " ".ljust(5), "TOTAL".ljust(33), "|".ljust(11), str(sum1).ljust(17), "|")
-        else:
-            print("|".ljust(14), " ".ljust(5), "TOTAL".ljust(33), "|".ljust(13), "", str(sum1).ljust(14), "|")
-        print("| - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -|")
+            sum1 += int(qty[i]) * int(BV[i])
+            query = 'update Review SET TotalCustomer = TotalCustomer + 1 where code = {}'.format(code[i])
+            cur.execute(query)
+            table.add_row([i + 1, bK[i], BV[i], qty[i], int(qty[i]) * int(BV[i])])
+        print(table)
     elif len(bK) == 0 or len(BV) == 0:
         print(Fore.RED + "YOU HAVE ORDERED NOTHING" + Style.RESET_ALL)
-    if sum1 > 0:
-        cur.execute(
-            "insert IGNORE into ACCOUNTER(BILLNO,NAME,DATE,AMOUNT) values({},'{}',CURDATE(),{})".format(billno, name, sum1))
+        billno = 0
     else:
-        pass
+        billno = 0
+        print("Something is wrong")
     db.commit()
+    return billno
+
+
 installer()
 import progressbar
 import time
 import mysql.connector as s
-import colorama  # COLORAMA IS MODULE WHICH IS USED TO PRINT IN RESPECTIVE COLORS(BLACK,WHITE,CYAN,MAGENTA,BLUE,GREEN,RED,YELLOW)                                                #FORE(PRINTS TEXT FORM) ,BACK(PRINTS BGCOLOR IN PARTICULAR LINE),STYLE(CHANGES SIZE AND TEXTURE OF TEXT)
+import \
+    colorama  # COLORAMA IS MODULE WHICH IS USED TO PRINT IN RESPECTIVE COLORS(BLACK,WHITE,CYAN,MAGENTA,BLUE,GREEN,RED,YELLOW)                                                #FORE(PRINTS TEXT FORM) ,BACK(PRINTS BGCOLOR IN PARTICULAR LINE),STYLE(CHANGES SIZE AND TEXTURE OF TEXT)
+import random
+import sys
+import prettytable
 from colorama import Fore, Style
+
 # ____MAIN____
 colorama.init()  # IT CAN'T BE USED IN SHELL. COLORAMA.INIT() IS USED TO WORK IT WITH PYTHON's DOSON MODE.
 print(Fore.YELLOW + '', end='')  # Fore is used to print colored text in py.exe.
+orderCode = ''
 while True:
     try:
         pwds = input("Enter your MySQL Password to access SQL:")
@@ -208,6 +225,8 @@ while True:
         cur = db.cursor()
         cur.execute("create database if not exists " + dbs)
         cur.execute("use " + dbs)  # DATA IS ADDED TO DATABASE IF REQUIRED DATA EXISTS OR NOT.
+        cur.execute(
+            'create table if not exists REVIEW (code int (3) primary key,\n TotalCustomer int(5),\n Rating Decimal(2, 1))')
         Vc = MySQL('vegcombos')
         Nvc = MySQL('nonvegcombos')
         Vb = MySQL('vegburgers')
@@ -256,7 +275,7 @@ while True:
         D.Executor(706, "SHINOCHOCO CRUNCH(M)", 97)
         D.Executor(707, "SOFT SERVE(HOT FLUDGE/STRAWBERRY)", 70)  # Style is used to brigthen or dim text in py.exe
         cur.execute(
-            "create table if not exists ACCOUNTER ( BILLNO varchar(30) primary key,NAME varchar(40),Date date,AMOUNT int(5))")
+            "create table if not exists Customer ( BILLNO varchar(30) primary key,NAME varchar(40),Date date,AMOUNT int(5), ORDER_CODE varchar(40))")
         print(
             Fore.MAGENTA + Style.DIM + ". . . . . . . . . /------------------------------------------\\. . . . . . . . . ")
         print(
@@ -264,7 +283,7 @@ while True:
         print(
             Fore.CYAN + Style.DIM + ". . . . . . . . /----------------------------------------------\\. . . . . . . . ")
         print(Fore.GREEN + ". . . . . . . . \----------:-DEVELOPED By SHREY PATEL----------/. . . . . . . . ")
-        print(Fore.YELLOW + " . . . . . . . . \-----ALSO BY:-JABEZ JOSE & RIDHAM PATEL-----/. . . . . . . . ")
+        print(Fore.YELLOW + " . . . . . . . . \--------------------------------------------/. . . . . . . . ")
         print(
             Fore.RED + Style.BRIGHT + ". . . . . . . . . \------------------------------------------/. . . . . . . . . ")
         print(Fore.RED + Style.DIM + "Main Menu" + Style.RESET_ALL)
@@ -283,7 +302,7 @@ while True:
                             print("\t\t---------------MANAGEMENT  SYSTEM----------------")
                             print("\t\t-------------------------------------------------")
                             print("\t\t---------------:-By SHREY PATEL------------------")
-                            print("\t\t------ALSO BY:-JABEZ JOSE & RIDHAM PATEL---------")
+                            print("\t\t-------------------------------------------------")
                             while True:
                                 try:
                                     print("What would like to do now?\n")
@@ -299,7 +318,6 @@ while True:
                                             print(Fore.CYAN + '')
                                             BV = (input("Enter Your choice:")).lower()
                                             if BV == 'a':
-
                                                 Vc.Insertion()
                                             elif BV == 'b':
                                                 Nvc.Insertion()
@@ -396,41 +414,16 @@ while True:
                                     elif x == 5:
                                         sum2 = 0
                                         date1 = input("Enter date in YYYY-MM-DD format:")
-                                        cur.execute("select * from ACCOUNTER where Date='{}'".format(date1))
+                                        cur.execute("select * from Customer where Date='{}'".format(date1))
                                         BV = cur.fetchall()
                                         if len(BV) > 0:
-                                            print("+----------+----------------------------+------------+------+")
-                                            print("|  BILLNO  |             NAME           |    DATE    |AMOUNT|")
-                                            print("|----------+----------------------------+------------+------|")
-                                            cur.execute("select * from ACCOUNTER where Date='{}'".format(date1))
+                                            table = prettytable.PrettyTable(["Bill No.", "Name", "Date", "Amount", "Order Code Given"])
+                                            cur.execute("select * from Customer where Date='{}'".format(date1))
                                             for data in cur.fetchall():
-                                                if len(str(data[3])) == 4:
-                                                    print("|", data[0], "|".ljust(3), data[1].ljust(24), "|", data[2],
-                                                          "|", data[3], "|")
-                                                elif len(str(data[3])) == 5:
-                                                    print("|", data[0], "|".ljust(3), data[1].ljust(24), "|", data[2],
-                                                          "|" + str(data[3]), "|".ljust(5))
-                                                elif len(str(data[3])) == 3:
-                                                    print("|", data[0], "|".ljust(3), data[1].ljust(24), "|", data[2],
-                                                          "| ", data[3], "|")
-                                                else:
-                                                    print("|", data[0], "|".ljust(3), data[1].ljust(24), "|", data[2],
-                                                          "|", data[3], "|")
+                                                table.add_row([data[0], data[1], data[2], data[3], data[4]])
                                                 sum2 += data[3]
-                                            print("|----------+----------------------------+------------+------|")
-                                            if len(str(sum2)) == 5:
-                                                print("|                 TOTAL                 |       " + str(
-                                                    sum2) + "       |")
-                                            elif len(str(sum2)) == 4:
-                                                print("|                 TOTAL                 |       " + str(
-                                                    sum2) + "        |")
-                                            elif len(str(sum2)) == 3:
-                                                print("|                 TOTAL                 |       " + str(
-                                                    sum2) + "         |")
-                                            else:
-                                                print("|                 TOTAL                 |       " + str(
-                                                    sum2) + "        |")
-                                            print("+----------+----------------------------+------------+------+")
+                                            print(table)
+                                            print("Total : " + str(sum2))
                                         elif len(BV) == 0:
                                             print("No Data is present to Show.")
                                         db.commit()
@@ -466,12 +459,14 @@ while True:
                     print("\t\t----------------EATCORNER  CENTRE----------------")
                     print("\t\t-------------------------------------------------")
                     print("\t\t---------------:-By SHREY PATEL------------------")
-                    print("\t\t-------ALSO BY:-JABEZ JOSE & RIDHAM PATEL--------")
+                    print("\t\t-------------------------------------------------")
                     a = 0
                     sum1 = 0
                     bK = []
                     BV = []
                     qty = []
+                    rv = []
+                    code = []
                     name = str(input("Enter Your name:"))
                     print("what would you like to eat for your meal?")
                     while True:
@@ -480,157 +475,145 @@ while True:
                             print(
                                 Fore.YELLOW + Style.DIM + "(00)FINAL BILLING\n(01)VEG COMBOS\n(02)NON-VEG COMBOS\n(03)VEG BURGERS\n(04)NON-VEG BURGERS\n(05)OTHERS\n(06)BERVERAGES\n(07)DESSERTS\n(08)BILLING\n(09)MISORDER\n(10)Back To Main Menu\n(11)Exit.\n")
                             x = input("Enter your Choice:")
+                            keys = []
+                            values = []
                             if x == '01' or x == '1':  # VEG-COMBO MENU
-                                keys = []
-                                values = []
                                 a = "vegcombos"
                                 repeater(a)
                                 while True:
                                     z = input("Enter Code to order or Press 'N' or 'n' to EXIT:")
                                     if z == '101':
-                                        Repeater(0)
+                                        Repeater(0, '101')
                                     elif z == '102':
-                                        Repeater(1)
+                                        Repeater(1, '102')
                                     elif z == '103':
-                                        Repeater(2)
+                                        Repeater(2, '103')
                                     elif z == '104':
-                                        Repeater(3)
+                                        Repeater(3, '104')
                                     elif z == '105':
-                                        Repeater(4)
+                                        Repeater(4, '105')
                                     elif z == 'n' or z == 'N':
                                         break
                                     else:
                                         print("You have Entered Wrong INPUT.TRY AGAIN ........")
                             elif x == '02' or x == '2':  # NON-VEG-COMBO MENU
-                                keys = []
-                                values = []
                                 a = "nonvegcombos"
                                 repeater(a)
                                 while True:
                                     z = input("Enter Code to order or Press 'N' or 'n' to EXIT:")
                                     if z == '201':
-                                        Repeater(0)
+                                        Repeater(0, '201')
                                     elif z == '202':
-                                        Repeater(1)
+                                        Repeater(1, '202')
                                     elif z == '203':
-                                        Repeater(2)
+                                        Repeater(2, '203')
                                     elif z == '204':
-                                        Repeater(3)
+                                        Repeater(3, '204')
                                     elif z == '205':
-                                        Repeater(4)
+                                        Repeater(4, '205')
                                     elif z == 'n' or z == 'N':
                                         break
                                     else:
                                         print("You have Entered Wrong INPUT.TRY AGAIN ........")
                             elif x == '03' or x == '3':  # VEG-BURGER MENU
-                                keys = []
-                                values = []
                                 a = "vegburgers"
                                 repeater(a)
                                 while True:
                                     z = input("Enter Code to order or Press 'N' or 'n' to EXIT:")
                                     if z == '301':
-                                        Repeater(0)
+                                        Repeater(0, '301')
                                     elif z == '302':
-                                        Repeater(1)
+                                        Repeater(1, '302')
                                     elif z == '303':
-                                        Repeater(2)
+                                        Repeater(2, '303')
                                     elif z == '304':
-                                        Repeater(3)
+                                        Repeater(3, '304')
                                     elif z == '305':
-                                        Repeater(4)
+                                        Repeater(4, '305')
                                     elif z == 'n' or z == 'N':
                                         break
                                     else:
                                         print("You have Entered Wrong INPUT.TRY AGAIN ........")
                             elif x == '04' or x == '4':  # NON-VEG BURGER MENU
-                                keys = []
-                                values = []
                                 a = "nonvegburgers"
                                 repeater(a)
                                 while True:
                                     z = input("Enter Code to order or Press 'N' or 'n' to EXIT:")
                                     if z == '401':
-                                        Repeater(0)
+                                        Repeater(0, '401')
                                     elif z == '402':
-                                        Repeater(1)
+                                        Repeater(1, '402')
                                     elif z == '403':
-                                        Repeater(2)
+                                        Repeater(2, '403')
                                     elif z == '404':
-                                        Repeater(3)
+                                        Repeater(3, '404')
                                     elif z == '405':
-                                        Repeater(4)
+                                        Repeater(4, '405')
                                     elif z == 'n' or z == 'N':
                                         break
                                     else:
                                         print("You have Entered Wrong INPUT.TRY AGAIN ........")
                             elif x == '05' or x == '5':  # EXTRA'S MENU
-                                keys = []
-                                values = []
                                 a = "others"
                                 repeater(a)
                                 while True:
                                     z = input("Enter Code to order or Press 'N' or 'n' to EXIT:")
                                     if z == '501':
-                                        Repeater(0)
+                                        Repeater(0, '501')
                                     elif z == '502':
-                                        Repeater(1)
+                                        Repeater(1, '502')
                                     elif z == '503':
-                                        Repeater(2)
+                                        Repeater(2, '503')
                                     elif z == '504':
-                                        Repeater(3)
+                                        Repeater(3, '504')
                                     elif z == '505':
-                                        Repeater(4)
+                                        Repeater(4, '505')
                                     elif z == '506':
-                                        Repeater(5)
+                                        Repeater(5, '506')
                                     elif z == 'n' or z == 'N':
                                         break
                                     else:
                                         print("You have Entered Wrong INPUT.TRY AGAIN ........")
                             elif x == '06' or x == '6':  # BEVERAGE'S MENU
-                                keys = []
-                                values = []
                                 a = "beverages"
                                 repeater(a)
                                 while True:
                                     z = input("Enter Code to order or Press 'N' or 'n' to EXIT:")
                                     if z == '601':
-                                        Repeater(0)
+                                        Repeater(0, '601')
                                     elif z == '602':
-                                        Repeater(1)
+                                        Repeater(1, '602')
                                     elif z == '603':
-                                        Repeater(2)
+                                        Repeater(2, '603')
                                     elif z == '604':
-                                        Repeater(3)
+                                        Repeater(3, '604')
                                     elif z == '605':
-                                        Repeater(4)
+                                        Repeater(4, '605')
                                     elif z == '606':
-                                        Repeater(5)
+                                        Repeater(5, '606')
                                     elif z == 'n' or z == 'N':
                                         break
                                     else:
                                         print("You have Entered Wrong INPUT.TRY AGAIN ........")
                             elif x == '07' or x == '7':  # DESSERT'S MENU
-                                keys = []
-                                values = []
                                 a = "desserts"
                                 repeater(a)
                                 while True:
                                     z = input("Enter Code to order or Press 'N' or 'n' to EXIT:")
                                     if z == '701':
-                                        Repeater(0)
+                                        Repeater(0, '701')
                                     elif z == '702':
-                                        Repeater(1)
+                                        Repeater(1, '702')
                                     elif z == '703':
-                                        Repeater(2)
+                                        Repeater(2, '703')
                                     elif z == '704':
-                                        Repeater(3)
+                                        Repeater(3, '704')
                                     elif z == '705':
-                                        Repeater(4)
+                                        Repeater(4, '705')
                                     elif z == '706':
-                                        Repeater(5)
+                                        Repeater(5, '706')
                                     elif z == '707':
-                                        Repeater(6)
+                                        Repeater(6, '707')
                                     elif z == 'n' or z == 'N':
                                         break
                                     else:
@@ -661,15 +644,19 @@ while True:
                                 except IndexError:
                                     print("There is no such order that You want to Delete from your List.")
                             elif x == '10':  # EXITS FROM CUSTOMER MENU AND ALSO FROM THE SYSTEM
-                                BILLER(name)
+                                billno = BILLER(name)
+                                if billno != 0:
+                                    cur.execute(
+                                        "insert IGNORE into Customer(BILLNO,NAME,DATE,AMOUNT,ORDER_CODE) values({},'{}',CURDATE(),{},'{}')".format(
+                                            billno, name, sum1, orderCode[0:len(orderCode) - 1]))
                                 db.commit()
                                 break
                             elif x == '00' or x == '0':  # RECORDS OF PREVIOUS CUSTOMER ARE DELETED FROM HERE.
-                                BILLER(name)
+                                billno = BILLER(name)
+                                cur.execute(
+                                    "insert IGNORE into Customer(BILLNO,NAME,DATE,AMOUNT,ORDER_CODE) values({},'{}',CURDATE(),{},'{}')".format(
+                                        billno, name, sum1, orderCode[0:len(orderCode) - 1]))
                                 db.commit()
-                                sum1 = 0
-                                bk = []
-                                BV = []
                                 print(Fore.RED + "RECORD OF PREVIOUS CUSTOMER IS DELETED.\n" + Style.RESET_ALL)
                                 print(
                                     Fore.MAGENTA + Style.DIM + ". . . . . . . . . /------------------------------------------\\. . . . . . . . . ")
@@ -680,16 +667,30 @@ while True:
                                 print(
                                     Fore.GREEN + ". . . . . . . . \----------:-DEVELOPED By SHREY PATEL----------/. . . . . . . . ")
                                 print(
-                                    Fore.YELLOW + " . . . . . . . . \----ALSO BY:-JABEZ JOSE & RIDHAM PATEL------/. . . . . . . . ")
+                                    Fore.YELLOW + " . . . . . . . . \--------------------------------------------/. . . . . . . . ")
                                 print(
                                     Fore.RED + Style.BRIGHT + ". . . . . . . . . \------------------------------------------/. . . . . . . . . ")
+                                sum1 = 0
+                                bK.clear()
+                                keys.clear()
+                                values.clear()
+                                BV.clear()
+                                qty.clear()
+                                rv.clear()
+                                code.clear()
+                                orderCode = ''
+                                name = input("Enter your name:")
                             elif x == '11':
-                                BILLER(name)
+                                billno = BILLER(name)
+                                if billno != 0:
+                                    cur.execute(
+                                        "insert IGNORE into Customer(BILLNO,NAME,DATE,AMOUNT,ORDER_CODE) values({},'{}',CURDATE(),{},'{}')".format(
+                                            billno, name, sum1, orderCode[0:len(orderCode) - 1]))
                                 print("Exiting........")
                                 LOADING(0.1)
                                 db.commit()
                                 db.close()
-                                exit()
+                                sys.exit()
                             else:
                                 print(Fore.RED + "\nYOU HAVE ENTERED WRONG CHOICE. TRY AGAIN . . . . . . . . .\n")
                                 print("WHAT IS YOUR CHOICE?" + Style.RESET_ALL)
@@ -701,7 +702,7 @@ while True:
                     print(Fore.RED + "Exiting...." + Style.RESET_ALL)
                     LOADING(0.01)
                     db.close()
-                    exit()
+                    sys.exit()
                 else:
                     print('')
                     print(Fore.RED + Style.BRIGHT + "You Have Entered WRONG Choice.Try Again......" + Style.RESET_ALL)
@@ -713,4 +714,4 @@ while True:
     except s.errors.InterfaceError:
         print(Fore.RED + "PLEASE CHECK WHETHER MySQL SERVER IS STARTING OR NOT." + Style.RESET_ALL)
     except s.errors.ProgrammingError:
-        print(Fore.RED + "Enter Password CORRECTLY.TRY AGAIN. . . . . . . . . . . . . . ." + Style.RESET_ALL)
+        print(Fore.RED + "ENTER YOUR MySQL PASSWORD CORRECTLY.TRY AGAIN!!!!!!" + Style.RESET_ALL)
