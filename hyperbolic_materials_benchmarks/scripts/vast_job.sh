@@ -4,6 +4,8 @@
 #   JOB=d         task d: rebuild old samples, MACE-MP-0 embeddings, HGCN link prediction without / with divergence
 #                 fixes and GCN baselines (3 seeds), one process per (config, dataset)
 #   JOB=be:<DS>   tasks b+e on DS in {MP-ALOE, MatPES, MD22, OC20}: hyp_force.py HYP / EUC + mace_baseline.py, 3 seeds
+#   JOB=hgcn      HGCN link prediction (FIX=clip+cbound, 3 seeds) on the materials datasets not in task d: MP dielectric /
+#                 piezoelectric, OC20, OMat24 (2 subsets), JARVIS (3 tensor subsets)
 # SSH is unavailable from the controlling session, so results leave the instance only through the container log:
 # after the work (or at WALL seconds) a gzip+base64 archive of the result JSONs and logs is printed between
 # RESULTS_B64_BEGIN / RESULTS_B64_END in 300-character lines (the log service truncates lines at ~500 characters);
@@ -26,13 +28,16 @@ case $JOB in
   d) PKG="$PKG pymatgen rdkit fsspec aiohttp emmet-core"
      git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
        git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
+  hgcn) PKG="$PKG pymatgen ase-db-backends emmet-core"
+     git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
+       git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
   be:*) git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
        git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
 esac
 pip install -q $PKG > $L/pip.log 2>&1; say "pip exit $? torch=$(python -c 'import torch;print(torch.__version__, torch.cuda.is_available())')"
 cd /tmp   # the repo root contains queue.py, which shadows the stdlib module
 case $JOB in
-  c) ITEMS="new" ;; d) ITEMS="old" ;;
+  c) ITEMS="new" ;; d) ITEMS="old" ;; hgcn) ITEMS="mptrj mpcoll oc20 omat jarvis" ;;
   be:MP-ALOE) ITEMS="mpaloe" ;; be:MatPES) ITEMS="matpes" ;; be:MD22) ITEMS="md22ac" ;; be:OC20) ITEMS="oc20" ;;
 esac
 bash $S/download_data.sh $ITEMS > $L/download.log 2>&1; say "download exit $? $(du -sh $D | cut -f1)"
@@ -79,6 +84,20 @@ work_d() {
       > '$L'/sweep_$0_$1_$2.log 2>&1; e=$?; echo "[d] sweep $0 $1 $2 exit $e"; [ $e -ne 0 ] && tail -15 '$L'/sweep_$0_$1_$2.log | cut -c1-300 | sed "s/^/  | /"; true' < $L/sweep_jobs.txt
 }
 
+work_hgcn() {
+  # tensor sets need only MPtrj + the MP collections (fix_tensor_samples.py starts from an empty samples.pkl)
+  POOL=$POOL python $S/fix_tensor_samples.py > $L/samples_tensor.log 2>&1; say "tensor samples exit $?"
+  python $S/load_samples_new.py $POOL > $L/samples_new.log 2>&1; say "samples_new exit $?"
+  DEVICE=cuda N_EMB=$N_EMB TAG=_tensor SKIP_REFS=1 python -W ignore $S/embed_mace.py > $L/mace_tensor.log 2>&1; say "embed_tensor exit $?"
+  DEVICE=cuda N_EMB=$N_EMB SAMPLES=$D/samples_new.pkl TAG=_new SKIP_REFS=1 python -W ignore $S/embed_mace.py > $L/mace_new.log 2>&1
+  say "embed_new exit $?"
+  { for ds in MP-dielectric MP-piezoelectric; do echo "$D/samples.pkl $ds"; done
+    for ds in OC20-S2EF OMat24-rattled-300-subsampled OMat24-aimd-from-PBE-3000-nvt JARVIS-elastic JARVIS-piezo JARVIS-dielectric; do
+      echo "$D/samples_new.pkl $ds"; done; } > $L/hgcn_jobs.txt
+  xargs -P ${PAR:-16} -L 1 bash -c 'SAMPLES=$0 FIX=clip+cbound SEEDS=0,1,2 python -W ignore '$S'/hgcn_sweep.py HGCN 1 "$1" "HGCN_clip+cbound_$1" \
+      > '$L'/sweep_HGCN_$1.log 2>&1; e=$?; echo "[hgcn] sweep $1 exit $e"; [ $e -ne 0 ] && tail -15 '$L'/sweep_HGCN_$1.log | cut -c1-300 | sed "s/^/  | /"; true' < $L/hgcn_jobs.txt
+}
+
 work_be() {
   ds=$1
   DEVICE=cuda OUT=$D python -W ignore $S/hyp_force.py $ds EUC 0 0 $NSTRUCT > $L/cache_$ds.log 2>&1
@@ -91,7 +110,7 @@ work_be() {
   xargs -P ${PAR:-9} -I{} bash -c 'set -- {}; f='$L'/job_$(echo "$*" | tr " /" "__").log; DEVICE=cuda OUT='$D' python -W ignore '$S'/$* > $f 2>&1; e=$?; echo "[be] $* exit $e"; [ $e -ne 0 ] && tail -15 $f | cut -c1-300 | sed "s/^/  | /"; true' < $L/gpu_jobs.txt
 }
 
-case $JOB in c) work_c & ;; d) work_d & ;; be:*) work_be ${JOB#be:} & ;; esac
+case $JOB in c) work_c & ;; d) work_d & ;; hgcn) work_hgcn & ;; be:*) work_be ${JOB#be:} & ;; esac
 WP=$!
 while kill -0 $WP 2>/dev/null && [ $(( $(date +%s) - T0 )) -lt $WALL ]; do sleep 20; done
 kill -0 $WP 2>/dev/null && say "WALL limit reached; emitting partial results" || say "work finished"

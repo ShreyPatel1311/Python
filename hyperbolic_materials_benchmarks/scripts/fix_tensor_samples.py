@@ -2,7 +2,7 @@
 mp-bdgr): padded alphabetical IDs lose their leading 'a' padding (first session: 7305/7332 dielectric IDs matched,
 chemsys agreement 100%); numeric IDs (mp-570778, as in the 2025-09-25 build collections) are converted with
 emmet.core.mpid.AlphaID (570778 -> bgmja). Chemsys agreement of matched pairs is printed as a check."""
-import glob, pickle
+import glob, os, pickle
 import numpy as np, pyarrow.parquet as pq
 
 DATA = "/tmp/claude-0/data"; POOL = int(__import__("os").environ.get("POOL", 2000))
@@ -14,7 +14,7 @@ def norm(m):
         from emmet.core.mpid import AlphaID
         return "mp-" + AlphaID(int(m[3:]))._identifier
     return "mp-" + (m[3:].lstrip("a") or "a")
-out = pickle.load(open(f"{DATA}/samples.pkl", "rb"))
+out = pickle.load(open(f"{DATA}/samples.pkl", "rb")) if os.path.exists(f"{DATA}/samples.pkl") else {}   # tensor sets only
 pf = pq.ParquetFile(f"{DATA}/mptrj.parquet")
 base = pf.read(columns=["provenance", "energy", "nsites", "chemsys"]).to_pandas()
 base["mid"] = base.provenance.map(lambda p: p["material_id"] if p else None)
