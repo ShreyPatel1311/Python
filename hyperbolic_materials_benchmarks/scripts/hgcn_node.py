@@ -2,7 +2,12 @@
 (Chami et al. 2019, arXiv:1910.12933; PoincareBall, one trainable curvature per layer, args.c = None) vs the repo's
 Euclidean GCN encoder, identical head / training.
 Targets: EFG  - JARVIS dft_3d electric-field-gradient eigenvalues, sorted ascending (3 per atom; efg_data.py)
-         |F|  - per-atom force magnitude (MP-ALOE, MatPES parquet; eV/A)
+         <SRC> (MP-ALOE, MatPES)        - per-atom force magnitude |F| (eV/A)
+         <SRC>:F  for SRC in MPtrj, MP-ALOE, MatPES, OC20 (S2EF 200K, raw forces incl. fixed atoms), OMat24r / OMat24a
+                  (OMat24 val rattled-300-subsampled / aimd-from-PBE-3000-nvt)  - |F| (eV/A)
+         <SRC>:mag for SRC in MPtrj, MP-ALOE, MatPES   - |magnetic moment| per atom (muB; sign of collinear moments dropped)
+         MatPES:bader                                 - Bader charge per atom (as stored)
+         Rows without the target are skipped. A per-element mean baseline (train-set mean per Z) is also reported.
 Graph per structure: periodic quotient graph, radius 5 A (ASE neighbor_list), unweighted; node features = one-hot Z
 (same construction as hgcn_energy.py). HGCN takes no coordinates, so geometry enters only through graph connectivity.
 Divergence fix as in hgcn_sweep.py FIX=clip+cbound: gradient-norm clip 1.0, curvatures clamped to [0.01, 100].
@@ -20,25 +25,53 @@ torch.set_default_dtype(torch.float64)
 torch.set_num_threads(int(os.environ.get("NT", "4")))
 DS, MODEL, SEED, MAX_EP = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
 N = int(sys.argv[5]) if len(sys.argv) > 5 else (1500 if DS == "EFG" else 600)
+SRC, TGT = (DS.split(":") + ["F"])[:2]
 D = "/tmp/claude-0/data"; OUT = os.environ.get("OUT", D)
 C_MIN, C_MAX, PATIENCE = 0.01, 100.0, 20
 
 # ------------------------------------------------------------------ data
-cache = f"{D}/node_{DS}_{N}.pkl"
+cache = f"{D}/node_{DS.replace(':', '_')}_{N}.pkl"
 if os.path.exists(cache):
     S = pickle.load(open(cache, "rb"))
 else:
     from ase import Atoms
     from ase.neighborlist import neighbor_list
+    rng7 = np.random.default_rng(7)
     if DS == "EFG":
         S = [dict(Z=r["Z"], pos=r["pos"], cell=r["cell"], y=r["eig"]) for r in pickle.load(open(f"{D}/efg_{N}.pkl", "rb"))]
-    else:
+    elif SRC in ("MPtrj", "MP-ALOE", "MatPES"):
         import pyarrow.parquet as pq
-        pf = pq.ParquetFile(f"{D}/{'mpaloe' if DS == 'MP-ALOE' else 'matpes'}.parquet")
-        rows = np.sort(np.random.default_rng(7).choice(pf.metadata.num_rows, size=N, replace=False))
-        t = pf.read(columns=["atomic_numbers", "cart_coords", "cell", "forces"]).take(rows).to_pydict()
+        pf = pq.ParquetFile(f"{D}/{dict(MPtrj='mptrj', MatPES='matpes').get(SRC, 'mpaloe')}.parquet")
+        col = dict(F="forces", mag="magmoms", bader="bader_charges")[TGT]
+        if TGT == "F":
+            rows = np.sort(rng7.choice(pf.metadata.num_rows, size=N, replace=False))
+        else:   # rows that carry the target
+            has = np.array([v is not None and len(v) > 0 and None not in v for v in pf.read(columns=[col]).column(0).to_pylist()])
+            rows = np.sort(rng7.choice(np.where(has)[0], size=min(N, int(has.sum())), replace=False))
+        t = pf.read(columns=["atomic_numbers", "cart_coords", "cell", col]).take(rows).to_pydict()
+        f = {"F": lambda v: np.linalg.norm(np.array(v), axis=1), "mag": lambda v: np.abs(np.array(v, float)),
+             "bader": lambda v: np.array(v, float)}[TGT]
         S = [dict(Z=np.array(t["atomic_numbers"][k]), pos=np.array(t["cart_coords"][k]), cell=np.array(t["cell"][k]),
-                  y=np.linalg.norm(np.array(t["forces"][k]), axis=1)[:, None]) for k in range(N)]
+                  y=f(t[col][k])[:, None]) for k in range(len(rows))]
+    elif SRC == "OC20":
+        import io, lzma, tarfile
+        from ase.io import read
+        tf = tarfile.open(f"{D}/s2ef_train_200K.tar")
+        name = sorted(m for m in tf.getnames() if m.endswith(".extxyz.xz"))[3]
+        fr = read(io.StringIO(lzma.decompress(tf.extractfile(name).read()).decode()), index=":", format="extxyz")
+        S = [dict(Z=a.numbers.copy(), pos=a.positions.copy(), cell=np.array(a.cell),
+                  y=np.linalg.norm(a.get_forces(apply_constraint=False), axis=1)[:, None])
+             for a in (fr[k] for k in np.sort(rng7.choice(len(fr), size=N, replace=False)))]
+    elif SRC in ("OMat24r", "OMat24a"):
+        from ase.db import connect
+        db = connect(f"{D}/{dict(OMat24r='rattled-300-subsampled', OMat24a='aimd-from-PBE-3000-nvt')[SRC]}/data.aselmdb", type="aselmdb")
+        S = []
+        for i in np.sort(rng7.choice(db.count(), size=N, replace=False)):
+            a = db.get(int(i) + 1).toatoms()
+            S.append(dict(Z=a.numbers.copy(), pos=a.positions.copy(), cell=np.array(a.cell),
+                          y=np.linalg.norm(a.get_forces(apply_constraint=False), axis=1)[:, None]))
+    else:
+        raise SystemExit(f"unknown dataset {DS}")
     for s in S:
         a = Atoms(numbers=s["Z"], positions=s["pos"], cell=s["cell"], pbc=True)
         i, j = neighbor_list("ij", a, 5.0)
@@ -136,11 +169,15 @@ curv_last = [float(c) for c in net.curv()]
 if best_state is not None:
     net.load_state_dict(best_state)
 test_per, test_mae = evaluate(tb)
+ztr = np.concatenate([S[g]["Z"] for g in tr]); zte = np.concatenate([S[g]["Z"] for g in te])
+yte = np.concatenate([S[g]["y"] for g in te])
+zmean = {z: ytr[ztr == z].mean(0) for z in np.unique(ztr)}
+per_el = float(np.mean(np.abs(yte - np.array([zmean.get(z, mu) for z in zte]))))
 res = dict(dataset=DS, model=MODEL, seed=SEED, n_structures=G, n_train_atoms=int(len(ytr)), target_sd=sd.tolist(),
            epochs_run=len(log), best_epoch=best_ep, diverged=diverged, sec=round(time.time() - t0, 1),
            test_MAE=test_mae, test_MAE_per_target=test_per, mean_baseline_MAE=float(np.mean(np.abs(
-               np.concatenate([S[g]["y"] for g in te]) - mu))),
+               np.concatenate([S[g]["y"] for g in te]) - mu))), per_element_baseline_MAE=per_el,
            curvature_best=[float(c) for c in net.curv()], curvature_last=curv_last,
            curvature_at_bound=[bool(c <= C_MIN + 1e-9 or c >= C_MAX - 1e-9) for c in curv_last], curve=log)
 print("RESULT " + json.dumps({k: v for k, v in res.items() if k != "curve"}), flush=True)
-json.dump(res, open(f"{OUT}/node_{DS}_{MODEL}_s{SEED}.json", "w"))
+json.dump(res, open(f"{OUT}/node_{DS.replace(':', '_')}_{MODEL}_s{SEED}.json", "w"))

@@ -1,0 +1,8 @@
+MP-elasticity 1500 structures; target mean [104.337, 53.3297] sd [74.2962, 45.1038]
+dielectric 7332 records; 6117 with an MPtrj frame of equal nsites and chemsys
+MP-dielectric 1500 structures; target mean [13.95, 19.2949, 79.2457] sd [32.3784, 60.3568, 1955.247]
+piezoelectric 3322 records; 2419 with an MPtrj frame of equal nsites and chemsys
+MP-piezoelectric 1500 structures; target mean [1.1608] sd [3.076]
+JARVIS-elastic 1500 structures; target mean [91.4979, 39.4701] sd [71.5367, 41.5898]
+JARVIS-eps-optB88 1500 structures; target mean [56.2416] sd [64.3146]
+DONE
