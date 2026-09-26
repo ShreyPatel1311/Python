@@ -1,0 +1,14 @@
+diff --git a/manifolds/euclidean.py b/manifolds/euclidean.py
+index 8d53f6a..c5ca437 100644
+--- a/manifolds/euclidean.py
++++ b/manifolds/euclidean.py
+@@ -14,8 +14,7 @@ class Euclidean(Manifold):
+ 
+     def normalize(self, p):
+         dim = p.size(-1)
+-        p.view(-1, dim).renorm_(2, 0, 1.)
+-        return p
++        return p.reshape(-1, dim).renorm(2, 0, 1.).view_as(p)  # out-of-place (torch>=2 autograd compat)
+ 
+     def sqdist(self, p1, p2, c):
+         return (p1 - p2).pow(2).sum(dim=-1)
