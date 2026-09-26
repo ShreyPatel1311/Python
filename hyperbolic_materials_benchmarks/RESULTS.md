@@ -81,3 +81,14 @@ seen-element structures (`test_seen`).
    equivariant full-tensor EFG model: curvatures 0.74–0.93, Euclidean twin slightly better (tensor MAE 12.27 vs 12.79).
 
 Open: HGCN curvature on graph-level (per-structure) targets per dataset not yet measured.
+
+### Session 2, later runs: HGCN curvature on tensor-derived / per-atom targets (no link prediction)
+- **Graph-level, rotation-invariant tensor targets** (`graph_*`; 1,500 structures, 3 seeds, HGCN with per-layer trainable
+  curvature, clip + bounds): MP dielectric eigenvalues, MP piezoelectric tensor norm, MP / JARVIS Voigt K and G, JARVIS
+  OptB88vdW ε trace/3. Inner-layer curvature at the best epoch 0.94–1.26 (last epoch ≤ 1.36); HGCN ≈ GCN.
+- **Per-atom targets** (`node_*`; 600 structures, 3 seeds): |F| on MPtrj, OC20, OMat24 (2 subsets), |magmom| on MPtrj,
+  MatPES, MP-ALOE, Bader charge on MatPES. Inner-layer curvature at the best epoch 0.91–1.31 (last epoch ≤ 1.38). For
+  |magmom| and Bader charge both HGCN and GCN are worse than the per-element mean baseline (not learned).
+- **Link-prediction early-stopping rule** (HGCN repo `train.py`: `counter == patience and epoch > min_epochs`) never
+  fires if the patience count is reached before `min_epochs`; the 5 runs that hit the 5,000-epoch cap are the single-seed
+  high-curvature outliers (5.16–7.24) and their curvature was recorded ~4,700 epochs after the best validation epoch.
