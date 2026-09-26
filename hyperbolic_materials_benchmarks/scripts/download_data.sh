@@ -31,9 +31,12 @@ for coll in ("elasticity", "dielectric", "piezoelectric"):
     s = urllib.request.urlopen(f"{B}/?list-type=2&prefix=collections/2025-09-25/{coll}/").read().decode()
     assert "<IsTruncated>false" in s
     keys = sorted(k for k in re.findall("<Key>([^<]*)", s) if k.endswith(".jsonl.gz") and "manifest" not in k)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(16) as ex:   # order preserved by map
+        blobs = list(ex.map(lambda k: urllib.request.urlopen(f"{B}/{k}").read(), keys))
     rows = []
-    for k in keys:
-        for line in gzip.GzipFile(fileobj=io.BytesIO(urllib.request.urlopen(f"{B}/{k}").read())):
+    for blob in blobs:
+        for line in gzip.GzipFile(fileobj=io.BytesIO(blob)):
             d = json.loads(line)
             rows.append(dict(material_id=d["material_id"], structure=json.dumps(d.get("structure")),
                              symmetry=d.get("symmetry"), deprecated=bool(d.get("deprecated"))))

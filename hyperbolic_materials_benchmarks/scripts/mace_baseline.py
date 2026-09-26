@@ -42,7 +42,10 @@ for r, p in zip(ref, pred):
     d = np.abs(p.arrays["MACE_forces"] - r.arrays["REF_forces"])
     free = r.arrays["free"].astype(bool) if "free" in r.arrays else np.ones(n, bool)
     af += d.sum(); nf += d.size; aff += d[free].sum(); nff += int(free.sum()) * 3
-model = torch.load(f"{wd}/{name}.model", map_location="cpu", weights_only=False)
+try:
+    model = torch.load(f"{wd}/{name}.model", map_location=torch.device("cpu"), weights_only=False)
+except AttributeError:   # torch 2.4.1: '_thread._local' object has no attribute 'map_location'
+    model = torch.jit.load(f"{wd}/{name}_compiled.model", map_location="cpu")
 epochs = sum(1 for line in open(f"{wd}/train.log") if " INFO: Epoch " in line)
 res = dict(dataset=DS, model="MACE", seed=SEED, n_structures=N, n_test=len(ref),
            n_params=int(sum(p.numel() for p in model.parameters())), device=DEV, epochs_logged=epochs,

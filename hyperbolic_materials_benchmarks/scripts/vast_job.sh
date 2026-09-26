@@ -6,7 +6,8 @@
 #   JOB=be:<DS>   tasks b+e on DS in {MP-ALOE, MatPES, MD22, OC20}: hyp_force.py HYP / EUC + mace_baseline.py, 3 seeds
 # SSH is unavailable from the controlling session, so results leave the instance only through the container log:
 # after the work (or at WALL seconds) a gzip+base64 archive of the result JSONs and logs is printed between
-# RESULTS_B64_BEGIN / RESULTS_B64_END; then the container idles until destroyed.
+# RESULTS_B64_BEGIN / RESULTS_B64_END in 300-character lines (the log service truncates lines at ~500 characters);
+# the last 15 lines of each failed job log are also printed. Then the container idles until destroyed.
 # Env: JOB, BRANCH, POOL (c/d samples per dataset, 500), N_EMB (500), NSTRUCT (600), MAX_EP (40), SEEDS3 ("0 1 2"),
 #      PAR (parallel processes, 16 for d / 9 for be), WALL (5400)
 set -uo pipefail
@@ -49,8 +50,8 @@ with tarfile.open(fileobj=buf, mode="w:gz") as tf:
         tf.add(f, arcname=f.split("/claude-0/")[1])
 b = base64.b64encode(buf.getvalue()).decode()
 print("RESULTS_B64_BEGIN", len(b), sys.argv[1], flush=True)
-for i in range(0, len(b), 4000):
-    print("B64", i // 4000, b[i:i + 4000], flush=True)
+for i in range(0, len(b), 300):   # the Vast log service truncates lines at ~500 characters
+    print("B64", i // 300, b[i:i + 300], flush=True)
 print("RESULTS_B64_END", sys.argv[1], flush=True)
 EOF
 }
@@ -74,7 +75,7 @@ work_d() {
     while read ds; do echo "$cfg $ds"; done < $L/datasets.txt
   done > $L/sweep_jobs.txt
   xargs -P ${PAR:-16} -L 1 bash -c 'FIX=$1 SEEDS=0,1,2 python -W ignore '$S'/hgcn_sweep.py $0 1 "$2" "$0_$1_$2" \
-      > '$L'/sweep_$0_$1_$2.log 2>&1; echo "[d] sweep $0 $1 $2 exit $?"' < $L/sweep_jobs.txt
+      > '$L'/sweep_$0_$1_$2.log 2>&1; e=$?; echo "[d] sweep $0 $1 $2 exit $e"; [ $e -ne 0 ] && tail -15 '$L'/sweep_$0_$1_$2.log | cut -c1-300 | sed "s/^/  | /"; true' < $L/sweep_jobs.txt
 }
 
 work_be() {
@@ -86,7 +87,7 @@ work_be() {
     for m in HYP EUC; do echo "hyp_force.py $ds $m $s $MAX_EP $NSTRUCT"; done
     echo "mace_baseline.py $ds $s $MAX_EP $NSTRUCT"
   done > $L/gpu_jobs.txt
-  xargs -P ${PAR:-9} -I{} bash -c 'set -- {}; DEVICE=cuda OUT='$D' python -W ignore '$S'/$* > '$L'/job_$(echo "$*" | tr " /" "__").log 2>&1; echo "[be] $* exit $?"' < $L/gpu_jobs.txt
+  xargs -P ${PAR:-9} -I{} bash -c 'set -- {}; f='$L'/job_$(echo "$*" | tr " /" "__").log; DEVICE=cuda OUT='$D' python -W ignore '$S'/$* > $f 2>&1; e=$?; echo "[be] $* exit $e"; [ $e -ne 0 ] && tail -15 $f | cut -c1-300 | sed "s/^/  | /"; true' < $L/gpu_jobs.txt
 }
 
 case $JOB in c) work_c & ;; d) work_d & ;; be:*) work_be ${JOB#be:} & ;; esac
