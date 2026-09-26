@@ -6,6 +6,9 @@ Divergence fix as hgcn_sweep.py FIX=clip+cbound (grad-norm clip 1.0, curvatures 
 Curvatures reported: encoder.curvatures = [c_1, c_2, c_3, c_out]; c_out is the curvature of the last layer's output,
 which the log_0 readout at the same curvature cancels, so only c_1..c_3 carry information.
 Usage: hgcn_graph.py <dataset> <HGCN|GCN> <seed> <max_epochs>
+Env (curvature-dynamics tests): C_LR (> 0: separate Adam learning rate for the curvature parameters; default: same
+as the other weights, 1e-3), C_INIT (initial value of every trainable curvature, default 1), PATIENCE, RUN_TAG
+(suffix of the output file).
 """
 import json, os, pickle, sys, time
 import numpy as np, scipy.sparse as sp, torch, torch.nn as nn
@@ -15,11 +18,14 @@ from models import encoders
 from utils.data_utils import normalize
 import manifolds
 
+PATIENCE = int(os.environ.get("PATIENCE", 0)) or None
+C_LR = float(os.environ.get("C_LR", 0)); C_INIT = float(os.environ.get("C_INIT", 1.0))
+RUN_TAG = os.environ.get("RUN_TAG", "")
 torch.set_default_dtype(torch.float64)
 torch.set_num_threads(int(os.environ.get("NT", "4")))
 DS, MODEL, SEED, MAX_EP = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
 D = "/tmp/claude-0/data"; OUT = os.environ.get("OUT", D)
-C_MIN, C_MAX, PATIENCE, ZMAX = 0.01, 100.0, 20, 100
+C_MIN, C_MAX, _PAT, ZMAX = 0.01, 100.0, 20, 100
 
 cache = f"{D}/ttg_{DS}.pkl"
 if os.path.exists(cache):
@@ -86,7 +92,14 @@ class Net(nn.Module):
 
 
 torch.manual_seed(SEED); np.random.seed(SEED)
-net = Net(); opt = torch.optim.Adam(net.parameters(), lr=1e-3)
+net = Net()
+PATIENCE = PATIENCE or _PAT
+with torch.no_grad():
+    for c in net.curv():
+        c.fill_(C_INIT)
+cids = {id(c) for c in net.curv()}
+opt = torch.optim.Adam([{"params": [q for q in net.parameters() if id(q) not in cids], "lr": 1e-3},
+                        {"params": list(net.curv()), "lr": C_LR if C_LR > 0 else 1e-3}])
 vb = [batch(va[i:i + 64]) for i in range(0, len(va), 64)]
 tb = [batch(te[i:i + 64]) for i in range(0, len(te), 64)]
 
@@ -131,4 +144,5 @@ res = dict(dataset=DS, model=MODEL, seed=SEED, n_structures=G, n_train=len(tr), 
            curvature_best=[float(c) for c in net.curv()], curvature_last=curv_last,
            curvature_at_bound=[bool(c <= C_MIN + 1e-9 or c >= C_MAX - 1e-9) for c in curv_last], curve=log)
 print("RESULT " + json.dumps({k: v for k, v in res.items() if k != "curve"}), flush=True)
-json.dump(res, open(f"{OUT}/graph_{DS}_{MODEL}_s{SEED}.json", "w"))
+res.update(c_lr=C_LR or 1e-3, c_init=C_INIT, patience=PATIENCE)
+json.dump(res, open(f"{OUT}/graph_{DS}_{MODEL}_s{SEED}{RUN_TAG}.json", "w"))

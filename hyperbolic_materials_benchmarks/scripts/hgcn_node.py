@@ -12,6 +12,9 @@ Graph per structure: periodic quotient graph, radius 5 A (ASE neighbor_list), un
 (same construction as hgcn_energy.py). HGCN takes no coordinates, so geometry enters only through graph connectivity.
 Divergence fix as in hgcn_sweep.py FIX=clip+cbound: gradient-norm clip 1.0, curvatures clamped to [0.01, 100].
 Usage: hgcn_node.py <EFG|MP-ALOE|MatPES> <HGCN|GCN> <seed> <max_epochs> [n_structures]
+Env (curvature-dynamics tests): C_LR (> 0: separate Adam learning rate for the curvature parameters; default: same
+as the other weights, 1e-3), C_INIT (initial value of every trainable curvature, default 1), PATIENCE, RUN_TAG
+(suffix of the output file).
 """
 import json, os, pickle, sys, time
 import numpy as np, scipy.sparse as sp, torch, torch.nn as nn
@@ -21,13 +24,16 @@ from models import encoders
 from utils.data_utils import normalize
 import manifolds
 
+PATIENCE = int(os.environ.get("PATIENCE", 0)) or None
+C_LR = float(os.environ.get("C_LR", 0)); C_INIT = float(os.environ.get("C_INIT", 1.0))
+RUN_TAG = os.environ.get("RUN_TAG", "")
 torch.set_default_dtype(torch.float64)
 torch.set_num_threads(int(os.environ.get("NT", "4")))
 DS, MODEL, SEED, MAX_EP = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
 N = int(sys.argv[5]) if len(sys.argv) > 5 else (1500 if DS == "EFG" else 600)
 SRC, TGT = (DS.split(":") + ["F"])[:2]
 D = "/tmp/claude-0/data"; OUT = os.environ.get("OUT", D)
-C_MIN, C_MAX, PATIENCE = 0.01, 100.0, 20
+C_MIN, C_MAX, _PAT = 0.01, 100.0, 20
 
 # ------------------------------------------------------------------ data
 cache = f"{D}/node_{DS.replace(':', '_')}_{N}.pkl"
@@ -70,9 +76,23 @@ else:
             a = db.get(int(i) + 1).toatoms()
             S.append(dict(Z=a.numbers.copy(), pos=a.positions.copy(), cell=np.array(a.cell),
                           y=np.linalg.norm(a.get_forces(apply_constraint=False), axis=1)[:, None]))
+    elif SRC == "TREE":   # positive control: depth of each node in random trees (branching 2-4, depth 3)
+        S = []
+        for _ in range(N):
+            par, depth, frontier = [-1], [0], [0]
+            for d in range(1, 4):
+                nxt = []
+                for u in frontier:
+                    for _ in range(int(rng7.integers(2, 5))):
+                        par.append(u); depth.append(d); nxt.append(len(par) - 1)
+                frontier = nxt
+            n = len(par); e = np.array([(i, par[i]) for i in range(1, n)])
+            deg = np.bincount(np.r_[e[:, 0], e[:, 1]], minlength=n)
+            Z = np.minimum(deg, 98); Z[0] = 99      # features: degree, root marker
+            S.append(dict(Z=Z, e=np.r_[e, e[:, ::-1]], y=np.array(depth, float)[:, None]))
     else:
         raise SystemExit(f"unknown dataset {DS}")
-    for s in S:
+    for s in (s for s in S if "e" not in s):
         a = Atoms(numbers=s["Z"], positions=s["pos"], cell=s["cell"], pbc=True)
         i, j = neighbor_list("ij", a, 5.0)
         e = np.unique(np.stack([i, j], 1), axis=0); s["e"] = e[e[:, 0] != e[:, 1]]
@@ -130,7 +150,14 @@ class Net(nn.Module):
 
 
 torch.manual_seed(SEED); np.random.seed(SEED)
-net = Net(); opt = torch.optim.Adam(net.parameters(), lr=1e-3)
+net = Net()
+PATIENCE = PATIENCE or _PAT
+with torch.no_grad():
+    for c in net.curv():
+        c.fill_(C_INIT)
+cids = {id(c) for c in net.curv()}
+opt = torch.optim.Adam([{"params": [q for q in net.parameters() if id(q) not in cids], "lr": 1e-3},
+                        {"params": list(net.curv()), "lr": C_LR if C_LR > 0 else 1e-3}])
 vb = [batch(va[i:i + 64]) for i in range(0, len(va), 64)]
 tb = [batch(te[i:i + 64]) for i in range(0, len(te), 64)]
 
@@ -180,4 +207,5 @@ res = dict(dataset=DS, model=MODEL, seed=SEED, n_structures=G, n_train_atoms=int
            curvature_best=[float(c) for c in net.curv()], curvature_last=curv_last,
            curvature_at_bound=[bool(c <= C_MIN + 1e-9 or c >= C_MAX - 1e-9) for c in curv_last], curve=log)
 print("RESULT " + json.dumps({k: v for k, v in res.items() if k != "curve"}), flush=True)
-json.dump(res, open(f"{OUT}/node_{DS.replace(':', '_')}_{MODEL}_s{SEED}.json", "w"))
+res.update(c_lr=C_LR or 1e-3, c_init=C_INIT, patience=PATIENCE)
+json.dump(res, open(f"{OUT}/node_{DS.replace(':', '_')}_{MODEL}_s{SEED}{RUN_TAG}.json", "w"))

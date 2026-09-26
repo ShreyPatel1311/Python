@@ -4,6 +4,8 @@
 #   JOB=d         task d: rebuild old samples, MACE-MP-0 embeddings, HGCN link prediction without / with divergence
 #                 fixes and GCN baselines (3 seeds), one process per (config, dataset)
 #   JOB=be:<DS>   tasks b+e on DS in {MP-ALOE, MatPES, MD22, OC20}: hyp_force.py HYP / EUC + mace_baseline.py, 3 seeds
+#   JOB=cdyn      curvature-dynamics test on one dataset (CDYN = MPtrj:F | TREE | MP-dielectric | JARVIS-elastic):
+#                 HGCN x 3 seeds x {C_LR 1e-3 init 1, C_LR 0.05 init 1, C_LR 0.05 init 5}, patience 50, <= 300 epochs
 #   JOB=atom      per-atom HGCN / GCN regression: |F| (MPtrj, OC20, OMat24 x2), |magmom| (MPtrj, MatPES, MP-ALOE),
 #                 Bader charge (MatPES); 600 structures, 3 seeds; ATOM_DS selects a subset (one instance per dataset)
 #   JOB=tgraph    graph-level HGCN / GCN regression of rotation-invariant tensor targets (tensor_targets.py:
@@ -34,6 +36,9 @@ case $JOB in
   d) PKG="$PKG pymatgen rdkit fsspec aiohttp emmet-core"
      git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
        git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
+  cdyn) PKG="$PKG pymatgen emmet-core"
+     git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
+       git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
   atom) PKG="$PKG ase-db-backends"
      git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
        git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
@@ -53,6 +58,7 @@ pip install -q $PKG > $L/pip.log 2>&1; say "pip exit $? torch=$(python -c 'impor
 cd /tmp   # the repo root contains queue.py, which shadows the stdlib module
 case $JOB in
   c) ITEMS="new" ;; d) ITEMS="old" ;; hgcn) ITEMS="mptrj mpcoll oc20 omat jarvis" ;; tensor) ITEMS="jarvis mpaloe matpes" ;; tgraph) ITEMS="mptrj jarvis" ;;
+  cdyn) case $CDYN in TREE) ITEMS="none" ;; MPtrj:F) ITEMS="mptrj" ;; *) ITEMS="mptrj jarvis" ;; esac ;;
   atom) ITEMS=$(for d in ${ATOM_DS:-MPtrj:F MPtrj:mag MatPES:mag MatPES:bader MP-ALOE:mag OC20:F OMat24r:F OMat24a:F}; do
           case $d in MPtrj:*) echo mptrj ;; MatPES:*) echo matpes ;; MP-ALOE:*) echo mpaloe ;; OC20:*) echo oc20 ;; OMat24*) echo omat ;; esac
         done | sort -u | tr "\n" " ") ;;
@@ -116,6 +122,16 @@ work_hgcn() {
       > '$L'/sweep_HGCN_$1.log 2>&1; e=$?; echo "[hgcn] sweep $1 exit $e"; [ $e -ne 0 ] && tail -15 '$L'/sweep_HGCN_$1.log | cut -c1-300 | sed "s/^/  | /"; true' < $L/hgcn_jobs.txt
 }
 
+work_cdyn() {
+  case $CDYN in MPtrj:F|TREE) SCRIPT=hgcn_node.py ;; *) SCRIPT=hgcn_graph.py
+    python -W ignore $S/tensor_targets.py 1500 > $L/tensor_targets.log 2>&1; say "tensor_targets exit $?" ;; esac
+  OUT=/tmp python -W ignore $S/$SCRIPT $CDYN HGCN 0 0 > $L/cache.log 2>&1; say "cache exit $?"
+  for s in $SEEDS3; do for cfg in "0 1" "0.05 1" "0.05 5"; do set -- $cfg
+    echo "$1 $2 $s"; done; done > $L/cdyn_jobs.txt
+  xargs -P ${PAR:-9} -L 1 bash -c 'f='$L'/job_clr$0_init$1_s$2.log; C_LR=$0 C_INIT=$1 PATIENCE=50 RUN_TAG=_clr$0_init$1 OUT='$D' \
+      python -W ignore '$S'/'$SCRIPT' '$CDYN' HGCN $2 300 > $f 2>&1; e=$?; echo "[cdyn] clr=$0 init=$1 seed=$2 exit $e"; [ $e -ne 0 ] && tail -15 $f | cut -c1-300 | sed "s/^/  | /"; true' < $L/cdyn_jobs.txt
+}
+
 work_atom() {
   ATOM_DS=${ATOM_DS:-MPtrj:F MPtrj:mag MatPES:mag MatPES:bader MP-ALOE:mag OC20:F OMat24r:F OMat24a:F}
   for s in $SEEDS3; do for ds in $ATOM_DS; do
@@ -152,7 +168,7 @@ work_be() {
   xargs -P ${PAR:-9} -I{} bash -c 'set -- {}; f='$L'/job_$(echo "$*" | tr " /" "__").log; DEVICE=cuda OUT='$D' python -W ignore '$S'/$* > $f 2>&1; e=$?; echo "[be] $* exit $e"; [ $e -ne 0 ] && tail -15 $f | cut -c1-300 | sed "s/^/  | /"; true' < $L/gpu_jobs.txt
 }
 
-case $JOB in c) work_c & ;; d) work_d & ;; hgcn) work_hgcn & ;; tensor) work_tensor & ;; tgraph) work_tgraph & ;; atom) work_atom & ;; be:*) work_be ${JOB#be:} & ;; esac
+case $JOB in c) work_c & ;; d) work_d & ;; hgcn) work_hgcn & ;; tensor) work_tensor & ;; tgraph) work_tgraph & ;; atom) work_atom & ;; cdyn) work_cdyn & ;; be:*) work_be ${JOB#be:} & ;; esac
 WP=$!
 while kill -0 $WP 2>/dev/null && [ $(( $(date +%s) - T0 )) -lt $WALL ]; do sleep 20; done
 kill -0 $WP 2>/dev/null && say "WALL limit reached; emitting partial results" || say "work finished"
