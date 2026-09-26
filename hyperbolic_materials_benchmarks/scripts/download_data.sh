@@ -9,7 +9,8 @@ D=/tmp/claude-0/data; mkdir -p "$D"; cd "$D"
 PY=${PY:-python}
 ITEMS=" $* "; ITEMS=${ITEMS/ old / mpaloe matpes mptrj mpcoll cdvae qm9 }; ITEMS=${ITEMS/ new / md22 rmd17 oc20 omat jarvis }
 has() { [[ "$ITEMS" == *" $1 "* ]]; }
-get() { [ -s "$2" ] || curl -sSL --retry 4 -o "$2" "$1"; }
+# abort a transfer that stays below 100 kB/s for 60 s (a stalled connection otherwise hangs forever), then retry
+get() { [ -s "$2" ] && return 0; for i in 1 2 3 4; do curl -sSL --connect-timeout 30 --speed-limit 100000 --speed-time 60 -o "$2" "$1" && return 0; rm -f "$2"; sleep 5; done; return 1; }
 C=https://materialsproject-contribs.s3.amazonaws.com
 F=https://dl.fbaipublicfiles.com/opencatalystproject/data
 has mpaloe && get "$C/MP_ALOE_2025/format=parquet/MP-ALOE-2025.parquet" mpaloe.parquet &
@@ -28,12 +29,12 @@ B = "https://materialsproject-build.s3.amazonaws.com"
 for coll in ("elasticity", "dielectric", "piezoelectric"):
     if os.path.exists(f"{coll}/data.parquet"):
         continue
-    s = urllib.request.urlopen(f"{B}/?list-type=2&prefix=collections/2025-09-25/{coll}/").read().decode()
+    s = urllib.request.urlopen(f"{B}/?list-type=2&prefix=collections/2025-09-25/{coll}/", timeout=120).read().decode()
     assert "<IsTruncated>false" in s
     keys = sorted(k for k in re.findall("<Key>([^<]*)", s) if k.endswith(".jsonl.gz") and "manifest" not in k)
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(16) as ex:   # order preserved by map
-        blobs = list(ex.map(lambda k: urllib.request.urlopen(f"{B}/{k}").read(), keys))
+        blobs = list(ex.map(lambda k: urllib.request.urlopen(f"{B}/{k}", timeout=120).read(), keys))
     rows = []
     for blob in blobs:
         for line in gzip.GzipFile(fileobj=io.BytesIO(blob)):
