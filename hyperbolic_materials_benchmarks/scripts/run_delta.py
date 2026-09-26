@@ -7,7 +7,7 @@
     space-group maximal-subgroup graph
 (d) molecular bond graphs (QM9, MPcules), with and without H
 """
-import itertools, json, pickle, sys, time
+import itertools, json, os, pickle, sys, time
 import numpy as np
 from ase import Atoms
 from ase.neighborlist import neighbor_list, natural_cutoffs
@@ -165,7 +165,7 @@ def spacegroup_subgroup_graph(spgs=None):
 
 
 if __name__ == "__main__":
-    samples = pickle.load(open("/tmp/claude-0/data/samples.pkl", "rb"))
+    samples = pickle.load(open(os.environ.get("SAMPLES", "/tmp/claude-0/data/samples.pkl"), "rb"))
     results = {"meta": dict(EXACT_N=EXACT_N, N_PER_STRUCT=N_PER_STRUCT, SAMPLES=SAMPLES)}
     t0 = time.time()
     for name, recs in samples.items():
@@ -208,7 +208,7 @@ if __name__ == "__main__":
             R["n_spacegroups"] = len(set(spgs))
         results[name] = R
         print(f"[{time.time()-t0:7.1f}s] {name}: " + json.dumps(R["per_structure"], default=float)[:400], flush=True)
-        json.dump(results, open("/tmp/claude-0/data/results_main.json", "w"), indent=1, default=float)
+        json.dump(results, open(f"/tmp/claude-0/data/results_main{os.environ.get('TAG', '')}.json", "w"), indent=1, default=float)
     results["spg_subgroup_full230"] = graph_stats(spacegroup_subgroup_graph())
-    json.dump(results, open("/tmp/claude-0/data/results_main.json", "w"), indent=1, default=float)
+    json.dump(results, open(f"/tmp/claude-0/data/results_main{os.environ.get('TAG', '')}.json", "w"), indent=1, default=float)
     print("DONE", time.time() - t0)

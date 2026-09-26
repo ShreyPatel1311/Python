@@ -2,7 +2,7 @@
 Graphs: symmetrized kNN (k = 5, 10, 20) with hop distances (HGCN protocol) + raw Euclidean (Khrulkov protocol).
 Also reference point clouds: Gaussian (3-D and 256-D), uniform in a hyperbolic disk (H^2), random tree.
 """
-import json, pickle, sys, time, warnings
+import json, os, pickle, sys, time, warnings
 import numpy as np, torch, networkx as nx
 warnings.filterwarnings("ignore")
 torch.set_num_threads(4)
@@ -26,7 +26,8 @@ def h2_points(n, R=6.0, seed=0):
 refs = {}
 refs["gauss3d"] = rng.normal(size=(N, 3))
 refs["gauss256d"] = rng.normal(size=(N, 256))
-for k, X in refs.items():
+SKIP_REFS = bool(int(os.environ.get("SKIP_REFS", "0")))  # reference clouds are dataset-independent
+for k, X in ({} if SKIP_REFS else refs).items():
     out[f"REF:{k}"] = dataset_level(X)
 # H^2: Khrulkov protocol on exact hyperbolic distances + kNN graph on those distances
 from hyp import delta_fixed_base, largest_cc, hop_distances, delta_sampled, s_score_sampled, edges_to_adj
@@ -50,8 +51,8 @@ print("refs done", json.dumps({k: v.get("knn10", v) for k, v in out.items()}, de
 
 # ---- MACE embeddings
 from mace.calculators import mace_mp
-calc = mace_mp(model="small", device="cpu", default_dtype="float32")
-samples = pickle.load(open("/tmp/claude-0/data/samples.pkl", "rb"))
+calc = mace_mp(model="small", device=os.environ.get("DEVICE", "cpu"), default_dtype="float32")
+samples = pickle.load(open(os.environ.get("SAMPLES", "/tmp/claude-0/data/samples.pkl"), "rb"))
 emb = {}
 t0 = time.time()
 for name, recs in samples.items():
@@ -66,5 +67,5 @@ for name, recs in samples.items():
     out[name] = dataset_level(X)
     out[name + "|nsub"] = {str(m): dataset_level(X, ks=(10,), seeds=(0,), n_sub=m) for m in (250, 500)}
     print(f"[{time.time()-t0:7.1f}s] {name}: knn10 {out[name]['knn10']} euclid {out[name]['euclid']}", flush=True)
-    json.dump(out, open("/tmp/claude-0/data/results_mace.json", "w"), indent=1, default=float)
+    json.dump(out, open(f"/tmp/claude-0/data/results_mace{os.environ.get('TAG', '')}.json", "w"), indent=1, default=float)
 print("DONE")

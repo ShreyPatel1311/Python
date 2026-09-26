@@ -1,9 +1,12 @@
 """HGCN (HazyResearch/hgcn) link prediction on our graphs, CPU, one seed.
 Usage: hgcn_sweep.py <model: HGCN|GCN> <double: 0|1> <dataset|all> [out_tag]
+Env FIX (divergence fixes, default none): "clip" = clip total grad norm to 1.0 before each step;
+"clip+cbound" = clip and clamp every trainable curvature to [0.01, 100] after each step. Env SEEDS (default "0"), SAMPLES.
+Each run records the curvatures (initial, final / last finite) and the gradient norm of the last finite step.
 Graphs per dataset: MACE kNN10 graph (features = MACE invariant descriptors) and chemical-system inclusion graph
 (features = element-membership vector; skipped when the dataset has a single chemical system).
 Hyperparameters follow the repo README link-prediction examples (HGCN: airport; GCN: cora)."""
-import itertools, json, pickle, sys, time
+import itertools, json, os, pickle, sys, time
 import numpy as np, scipy.sparse as sp, torch
 sys.path.insert(0, "/tmp/claude-0/hgcn")
 sys.path.insert(1, __file__.rsplit("/", 1)[0])
@@ -15,7 +18,9 @@ from run_delta import knn_adj
 
 torch.set_num_threads(4)
 MODEL, DOUBLE, WHICH = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-TAG = sys.argv[4] if len(sys.argv) > 4 else f"{MODEL}_d{DOUBLE}"
+FIX = os.environ.get("FIX", "none")
+SEEDS = [int(x) for x in os.environ.get("SEEDS", "0").split(",")]
+TAG = sys.argv[4] if len(sys.argv) > 4 else f"{MODEL}_d{DOUBLE}_{FIX}"
 if DOUBLE:
     torch.set_default_dtype(torch.float64)   # same effect as the repo's --double-precision 1 (train.py)
 
@@ -62,13 +67,25 @@ def run(A, X, seed=0, normalize_feats=1):
     opt = getattr(optimizers, args.optimizer)(params=m.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     best_val, best_test, best_epoch, best_emb, counter, t0 = m.init_metric_dict(), None, -1, None, 0, time.time()
     val_curve, diverged = [], False
+    # encoder.curvatures = per-layer curvatures + model.c (HGCN encoder appends it); GCN has none
+    curv = [p for p in getattr(m.encoder, "curvatures", []) if isinstance(p, torch.nn.Parameter) and p.requires_grad]
+    c_init, c_last, gn_last = [float(p) for p in curv], None, None
     for epoch in range(args.epochs):
         m.train(); opt.zero_grad()
         emb = m.encode(data["features"], data["adj_train_norm"])
         loss = m.compute_metrics(emb, data, "train")["loss"]
         if not torch.isfinite(loss):
             diverged = True; break
-        loss.backward(); opt.step()
+        loss.backward()
+        gn_last = float(torch.nn.utils.clip_grad_norm_(m.parameters(), 1.0 if FIX.startswith("clip") else float("inf")))
+        opt.step()
+        if FIX == "clip+cbound":
+            with torch.no_grad():
+                for p in curv:
+                    p.clamp_(0.01, 100.0)
+        if not all(torch.isfinite(p).all() for p in curv):
+            diverged = True; break
+        c_last = [float(p) for p in curv]
         m.eval()
         with torch.no_grad():
             emb = m.encode(data["features"], data["adj_train_norm"])
@@ -83,7 +100,8 @@ def run(A, X, seed=0, normalize_feats=1):
             if counter == args.patience and epoch > args.min_epochs:
                 break
     sec = time.time() - t0
-    return dict(model=MODEL, double=DOUBLE, seed=seed, epochs_run=epoch + 1, best_epoch=best_epoch, diverged=diverged,
+    return dict(model=MODEL, double=DOUBLE, fix=FIX, seed=seed, curv_init=c_init, curv_last_finite=c_last,
+                grad_norm_last_finite_step=gn_last, epochs_run=epoch + 1, best_epoch=best_epoch, diverged=diverged,
                 sec=round(sec, 2), sec_per_epoch=round(sec / (epoch + 1), 4),
                 val_roc=float(best_val["roc"]) if best_test else None,
                 test_roc=float(best_test["roc"]) if best_test else None,
@@ -91,7 +109,7 @@ def run(A, X, seed=0, normalize_feats=1):
                 n_nodes=int(A.shape[0]), n_edges=int(A.nnz // 2), val_curve=val_curve), best_emb
 
 
-samples = pickle.load(open("/tmp/claude-0/data/samples.pkl", "rb"))
+samples = pickle.load(open(os.environ.get("SAMPLES", "/tmp/claude-0/data/samples.pkl"), "rb"))
 names = list(samples) if WHICH == "all" else [WHICH]
 out, t_all = [], time.time()
 for name in names:
@@ -104,12 +122,13 @@ for name in names:
     if len(set(cs)) > 1:
         graphs["chemsys"] = (*chemsys_graph(cs), 1)
     for g, (A, X, nf) in graphs.items():
-        r, emb = run(A, X, seed=0, normalize_feats=nf)
-        r["normalize_feats"] = nf
-        r.update(dataset=name, graph=g)
-        if emb is not None:
-            np.save(f"/tmp/claude-0/data/emb_{TAG}_{name}_{g}.npy", emb.numpy())
-        out.append(r)
-        print(json.dumps({k: v for k, v in r.items() if k != "val_curve"}), flush=True)
-        json.dump(out, open(f"/tmp/claude-0/data/hgcn_sweep_{TAG}.json", "w"), indent=1)
+        for seed in SEEDS:
+            r, emb = run(A, X, seed=seed, normalize_feats=nf)
+            r["normalize_feats"] = nf
+            r.update(dataset=name, graph=g)
+            if emb is not None and seed == SEEDS[0]:
+                np.save(f"/tmp/claude-0/data/emb_{TAG}_{name}_{g}.npy", emb.numpy())
+            out.append(r)
+            print(json.dumps({k: v for k, v in r.items() if k != "val_curve"}), flush=True)
+            json.dump(out, open(f"/tmp/claude-0/data/hgcn_sweep_{TAG}.json", "w"), indent=1)
 print(f"TOTAL_WALL_SEC {time.time() - t_all:.1f}", flush=True)

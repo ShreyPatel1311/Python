@@ -1,7 +1,7 @@
 """Matched null models for dataset-level delta: per-feature independent permutation of the same embedding
 matrix (keeps each feature's marginal distribution and the dimension, destroys joint structure).
 Reported as the difference observed - null (negative = more tree-like than the matched null)."""
-import glob, json, pickle, sys
+import glob, json, os, pickle, sys
 import numpy as np
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from run_delta import dataset_level, comp_vec
@@ -11,9 +11,11 @@ def permute_null(X, seed):
     return np.column_stack([X[r.permutation(len(X)), j] for j in range(X.shape[1])])
 
 out = {}
-samples = pickle.load(open("/tmp/claude-0/data/samples.pkl", "rb"))
+samples = pickle.load(open(os.environ.get("SAMPLES", "/tmp/claude-0/data/samples.pkl"), "rb"))
 for f in sorted(glob.glob("/tmp/claude-0/data/mace_*.npy")):
     name = f.split("mace_")[1][:-4]
+    if name not in samples:
+        continue
     X = np.load(f)
     Xc = np.array([comp_vec(r) for r in samples[name][:1000]])
     res = {}
@@ -29,5 +31,5 @@ for f in sorted(glob.glob("/tmp/claude-0/data/mace_*.npy")):
             null_euclid_drel=[n["euclid"]["drel_khrulkov"] for n in nulls])
     out[name] = res
     print(name, json.dumps(res, default=float)[:600], flush=True)
-    json.dump(out, open("/tmp/claude-0/data/results_null.json", "w"), indent=1, default=float)
+    json.dump(out, open(f"/tmp/claude-0/data/results_null{os.environ.get('TAG', '')}.json", "w"), indent=1, default=float)
 print("DONE")
