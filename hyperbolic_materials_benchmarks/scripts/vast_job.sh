@@ -4,6 +4,8 @@
 #   JOB=d         task d: rebuild old samples, MACE-MP-0 embeddings, HGCN link prediction without / with divergence
 #                 fixes and GCN baselines (3 seeds), one process per (config, dataset)
 #   JOB=be:<DS>   tasks b+e on DS in {MP-ALOE, MatPES, MD22, OC20}: hyp_force.py HYP / EUC + mace_baseline.py, 3 seeds
+#   JOB=tensor    per-atom tensor targets: (1) hgcn_node.py HGCN / GCN on atom graphs, rotation-invariant targets
+#                 (JARVIS EFG eigenvalues, MP-ALOE / MatPES |F|); (2) hyp_efg.py HYP / EUC full EFG tensors; 3 seeds
 #   JOB=hgcn      HGCN link prediction (FIX=clip+cbound, 3 seeds) on the materials datasets not in task d: MP dielectric /
 #                 piezoelectric, OC20, OMat24 (2 subsets), JARVIS (3 tensor subsets)
 # SSH is unavailable from the controlling session, so results leave the instance only through the container log:
@@ -28,6 +30,9 @@ case $JOB in
   d) PKG="$PKG pymatgen rdkit fsspec aiohttp emmet-core"
      git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
        git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
+  tensor) PKG="$PKG pymatgen"
+     git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
+       git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
   hgcn) PKG="$PKG pymatgen ase-db-backends emmet-core"
      git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
        git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
@@ -37,7 +42,7 @@ esac
 pip install -q $PKG > $L/pip.log 2>&1; say "pip exit $? torch=$(python -c 'import torch;print(torch.__version__, torch.cuda.is_available())')"
 cd /tmp   # the repo root contains queue.py, which shadows the stdlib module
 case $JOB in
-  c) ITEMS="new" ;; d) ITEMS="old" ;; hgcn) ITEMS="mptrj mpcoll oc20 omat jarvis" ;;
+  c) ITEMS="new" ;; d) ITEMS="old" ;; hgcn) ITEMS="mptrj mpcoll oc20 omat jarvis" ;; tensor) ITEMS="jarvis mpaloe matpes" ;;
   be:MP-ALOE) ITEMS="mpaloe" ;; be:MatPES) ITEMS="matpes" ;; be:MD22) ITEMS="md22ac" ;; be:OC20) ITEMS="oc20" ;;
 esac
 bash $S/download_data.sh $ITEMS > $L/download.log 2>&1; say "download exit $? $(du -sh $D | cut -f1)"
@@ -98,6 +103,13 @@ work_hgcn() {
       > '$L'/sweep_HGCN_$1.log 2>&1; e=$?; echo "[hgcn] sweep $1 exit $e"; [ $e -ne 0 ] && tail -15 '$L'/sweep_HGCN_$1.log | cut -c1-300 | sed "s/^/  | /"; true' < $L/hgcn_jobs.txt
 }
 
+work_tensor() {
+  python -W ignore $S/efg_data.py ${N_EFG:-1500} > $L/efg_data.log 2>&1; say "efg_data exit $?"
+  { for s in $SEEDS3; do for ds in EFG MP-ALOE MatPES; do for m in HGCN GCN; do echo "hgcn_node.py $ds $m $s ${MAX_EP_T:-60}"; done; done
+      for m in HYP EUC; do echo "hyp_efg.py $m $s ${MAX_EP_T:-60} ${N_EFG:-1500}"; done; done; } > $L/tensor_jobs.txt
+  xargs -P ${PAR:-12} -I{} bash -c 'set -- {}; f='$L'/job_$(echo "$*" | tr " /" "__").log; DEVICE=cuda OUT='$D' python -W ignore '$S'/$* > $f 2>&1; e=$?; echo "[tensor] $* exit $e"; [ $e -ne 0 ] && tail -15 $f | cut -c1-300 | sed "s/^/  | /"; true' < $L/tensor_jobs.txt
+}
+
 work_be() {
   ds=$1
   DEVICE=cuda OUT=$D python -W ignore $S/hyp_force.py $ds EUC 0 0 $NSTRUCT > $L/cache_$ds.log 2>&1
@@ -110,7 +122,7 @@ work_be() {
   xargs -P ${PAR:-9} -I{} bash -c 'set -- {}; f='$L'/job_$(echo "$*" | tr " /" "__").log; DEVICE=cuda OUT='$D' python -W ignore '$S'/$* > $f 2>&1; e=$?; echo "[be] $* exit $e"; [ $e -ne 0 ] && tail -15 $f | cut -c1-300 | sed "s/^/  | /"; true' < $L/gpu_jobs.txt
 }
 
-case $JOB in c) work_c & ;; d) work_d & ;; hgcn) work_hgcn & ;; be:*) work_be ${JOB#be:} & ;; esac
+case $JOB in c) work_c & ;; d) work_d & ;; hgcn) work_hgcn & ;; tensor) work_tensor & ;; be:*) work_be ${JOB#be:} & ;; esac
 WP=$!
 while kill -0 $WP 2>/dev/null && [ $(( $(date +%s) - T0 )) -lt $WALL ]; do sleep 20; done
 kill -0 $WP 2>/dev/null && say "WALL limit reached; emitting partial results" || say "work finished"
