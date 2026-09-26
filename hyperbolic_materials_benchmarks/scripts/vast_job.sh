@@ -44,7 +44,7 @@ import base64, glob, io, os, sys, tarfile
 buf = io.BytesIO()
 with tarfile.open(fileobj=buf, mode="w:gz") as tf:
     for f in sorted(glob.glob("/tmp/claude-0/data/*.json") + glob.glob("/tmp/claude-0/logs/*.log")
-                    + glob.glob("/tmp/claude-0/data/mace_*_s*/train.log")):
+                    + glob.glob("/tmp/claude-0/data/mace_*_s*/*.log")):
         if f.endswith(("pip.log", "download.log")) or os.path.getsize(f) > 20_000_000:
             continue
         tf.add(f, arcname=f.split("/claude-0/")[1])

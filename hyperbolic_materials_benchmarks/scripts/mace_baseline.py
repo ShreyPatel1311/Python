@@ -31,10 +31,16 @@ subprocess.run([f"{BIN}/mace_run_train", "--name", name, "--seed", str(SEED), "-
                 "--default_dtype", "float32", "--device", DEV], cwd=wd, check=True,
                stdout=open(f"{wd}/train.log", "w"), stderr=subprocess.STDOUT)
 train_sec = time.time() - t0
-subprocess.run([f"{BIN}/mace_eval_configs", "--configs", f["test"], "--model", f"{wd}/{name}.model", "--output",
+# MACE cannot evaluate elements absent from training; score the seen-element test subset (same as hyp_force "test_seen")
+from ase.io import write
+seen_Z = set(z for a in read(f["train"], ":") for z in a.numbers.tolist())
+test_all = read(f["test"], ":")
+test_seen = [a for a in test_all if set(a.numbers.tolist()) <= seen_Z]
+write(f"{wd}/test_seen.xyz", test_seen, format="extxyz")
+subprocess.run([f"{BIN}/mace_eval_configs", "--configs", f"{wd}/test_seen.xyz", "--model", f"{wd}/{name}.model", "--output",
                 f"{wd}/pred.xyz", "--device", DEV, "--default_dtype", "float32"], check=True,
-               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-ref, pred = read(f["test"], ":"), read(f"{wd}/pred.xyz", ":")
+               stdout=open(f"{wd}/eval.log", "w"), stderr=subprocess.STDOUT)
+ref, pred = read(f"{wd}/test_seen.xyz", ":"), read(f"{wd}/pred.xyz", ":")
 ae, af, aff, nf, nff = [], 0.0, 0.0, 0, 0
 for r, p in zip(ref, pred):
     n = len(r)
@@ -47,8 +53,8 @@ try:
 except AttributeError:   # torch 2.4.1: '_thread._local' object has no attribute 'map_location'
     model = torch.jit.load(f"{wd}/{name}_compiled.model", map_location="cpu")
 epochs = sum(1 for line in open(f"{wd}/train.log") if " INFO: Epoch " in line)
-res = dict(dataset=DS, model="MACE", seed=SEED, n_structures=N, n_test=len(ref),
+res = dict(dataset=DS, model="MACE", seed=SEED, n_structures=N, n_test=len(test_all), n_test_seen=len(ref),
            n_params=int(sum(p.numel() for p in model.parameters())), device=DEV, epochs_logged=epochs,
-           train_sec=round(train_sec, 1), test=dict(E_MAE_per_atom=float(np.mean(ae)), F_MAE=af / nf, F_MAE_free=aff / max(nff, 1)))
+           train_sec=round(train_sec, 1), test=None, test_seen=dict(E_MAE_per_atom=float(np.mean(ae)), F_MAE=af / nf, F_MAE_free=aff / max(nff, 1)))
 print("RESULT " + json.dumps(res), flush=True)
 json.dump(res, open(f"{OUT}/hf_{DS}_MACE_s{SEED}_n{N}.json", "w"))

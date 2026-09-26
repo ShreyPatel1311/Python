@@ -10,6 +10,7 @@ EUC: identical code with exp/log maps = identity and Mobius ops = Euclidean ops 
 Energy E = sum_i [MLP(log_0(h_i)) * s + e0(Z_i)], s = training force RMS (NequIP default per-species scale), e0 = per-element least-squares fit on the training split
 (the network is trained on E - e0, computed in float64).
 Forces F = -dE/dx (autograd), so E is E(3)-invariant and F is E(3)-equivariant by construction.
+Test metrics: all test structures ("test") and those whose elements all occur in training ("test_seen").
 Loss = [MSE(E/atom) + MSE(F)] / var(F) over all atoms, i.e. equal weights in eV/atom and eV/A (same as MACE
 energy_weight = forces_weight = 1 up to a constant). OC20: free-atom force MAE also reported.
 
@@ -263,6 +264,10 @@ train_sec = time.time() - t0
 if best_state is not None:
     net.load_state_dict(best_state)
 test = evaluate(te) if best_state is not None else None
+# test structures whose elements all occur in the training split (e0 of an unseen element is 0 from lstsq)
+seen_Z = set(np.concatenate([S[g]["Z"] for g in tr]).tolist())
+te_seen = np.array([g for g in te if set(S[g]["Z"].tolist()) <= seen_Z])
+test_seen = evaluate(te_seen) if best_state is not None and len(te_seen) else None
 
 
 # ------------------------------------------------------------------ displacement probe
@@ -294,6 +299,7 @@ if best_state is not None:
 
 res = dict(dataset=DS, model=MODEL, seed=SEED, n_structures=G, n_train=len(tr), n_params=n_par, dtype=str(DT),
            device=str(DEV), epochs_run=len(log), best_epoch=best_ep, diverged=diverged, train_sec=round(train_sec, 1),
+           test_seen=test_seen, n_test=len(te), n_test_seen=len(te_seen),
            sec_per_epoch=round(train_sec / max(len(log), 1), 2), test=test, E_SD=E_SD, F_SD=F_SD, out_scale=OUT_SCALE, avg_neighbors=AVG_NB,
            curvature_final=[float(x) for x in net.curv().detach()] if net.hyp else None, probe=probe, curve=log)
 print("RESULT " + json.dumps({k: v for k, v in res.items() if k != "curve"}), flush=True)
