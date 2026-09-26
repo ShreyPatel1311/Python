@@ -5,7 +5,7 @@
 #                 fixes and GCN baselines (3 seeds), one process per (config, dataset)
 #   JOB=be:<DS>   tasks b+e on DS in {MP-ALOE, MatPES, MD22, OC20}: hyp_force.py HYP / EUC + mace_baseline.py, 3 seeds
 #   JOB=atom      per-atom HGCN / GCN regression: |F| (MPtrj, OC20, OMat24 x2), |magmom| (MPtrj, MatPES, MP-ALOE),
-#                 Bader charge (MatPES); 600 structures, 3 seeds
+#                 Bader charge (MatPES); 600 structures, 3 seeds; ATOM_DS selects a subset (one instance per dataset)
 #   JOB=tgraph    graph-level HGCN / GCN regression of rotation-invariant tensor targets (tensor_targets.py:
 #                 MP dielectric / piezoelectric / elasticity, JARVIS elastic / OptB88vdW dielectric), 3 seeds
 #   JOB=tensor    per-atom tensor targets: (1) hgcn_node.py HGCN / GCN on atom graphs, rotation-invariant targets
@@ -52,7 +52,10 @@ esac
 pip install -q $PKG > $L/pip.log 2>&1; say "pip exit $? torch=$(python -c 'import torch;print(torch.__version__, torch.cuda.is_available())')"
 cd /tmp   # the repo root contains queue.py, which shadows the stdlib module
 case $JOB in
-  c) ITEMS="new" ;; d) ITEMS="old" ;; hgcn) ITEMS="mptrj mpcoll oc20 omat jarvis" ;; tensor) ITEMS="jarvis mpaloe matpes" ;; tgraph) ITEMS="mptrj jarvis" ;; atom) ITEMS="mptrj matpes mpaloe oc20 omat" ;;
+  c) ITEMS="new" ;; d) ITEMS="old" ;; hgcn) ITEMS="mptrj mpcoll oc20 omat jarvis" ;; tensor) ITEMS="jarvis mpaloe matpes" ;; tgraph) ITEMS="mptrj jarvis" ;;
+  atom) ITEMS=$(for d in ${ATOM_DS:-MPtrj:F MPtrj:mag MatPES:mag MatPES:bader MP-ALOE:mag OC20:F OMat24r:F OMat24a:F}; do
+          case $d in MPtrj:*) echo mptrj ;; MatPES:*) echo matpes ;; MP-ALOE:*) echo mpaloe ;; OC20:*) echo oc20 ;; OMat24*) echo omat ;; esac
+        done | sort -u | tr "\n" " ") ;;
   be:MP-ALOE) ITEMS="mpaloe" ;; be:MatPES) ITEMS="matpes" ;; be:MD22) ITEMS="md22ac" ;; be:OC20) ITEMS="oc20" ;;
 esac
 bash $S/download_data.sh $ITEMS > $L/download.log 2>&1; say "download exit $? $(du -sh $D | cut -f1)"
@@ -114,10 +117,11 @@ work_hgcn() {
 }
 
 work_atom() {
-  for s in $SEEDS3; do for ds in MPtrj:F MPtrj:mag MatPES:mag MatPES:bader MP-ALOE:mag OC20:F OMat24r:F OMat24a:F; do
+  ATOM_DS=${ATOM_DS:-MPtrj:F MPtrj:mag MatPES:mag MatPES:bader MP-ALOE:mag OC20:F OMat24r:F OMat24a:F}
+  for s in $SEEDS3; do for ds in $ATOM_DS; do
     for m in HGCN GCN; do echo "hgcn_node.py $ds $m $s ${MAX_EP_A:-60}"; done; done; done > $L/atom_jobs.txt
   # build each dataset cache once (seed-0 GCN, 0 epochs) before the parallel runs read it
-  for ds in MPtrj:F MPtrj:mag MatPES:mag MatPES:bader MP-ALOE:mag OC20:F OMat24r:F OMat24a:F; do
+  for ds in $ATOM_DS; do
     OUT=/tmp python -W ignore $S/hgcn_node.py $ds GCN 0 0 > $L/cache_$ds.log 2>&1; say "cache $ds exit $?"; done
   xargs -P ${PAR:-16} -I{} bash -c 'set -- {}; f='$L'/job_$(echo "$*" | tr " /:" "___").log; OUT='$D' python -W ignore '$S'/$* > $f 2>&1; e=$?; echo "[atom] $* exit $e"; [ $e -ne 0 ] && tail -15 $f | cut -c1-300 | sed "s/^/  | /"; true' < $L/atom_jobs.txt
 }
