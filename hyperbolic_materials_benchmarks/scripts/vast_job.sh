@@ -9,7 +9,7 @@
 # RESULTS_B64_BEGIN / RESULTS_B64_END in 300-character lines (the log service truncates lines at ~500 characters);
 # the last 15 lines of each failed job log are also printed. Then the container idles until destroyed.
 # Env: JOB, BRANCH, POOL (c/d samples per dataset, 500), N_EMB (500), NSTRUCT (600), MAX_EP (40), SEEDS3 ("0 1 2"),
-#      PAR (parallel processes, 16 for d / 9 for be), WALL (5400)
+#      PAR (parallel processes, 16 for d / 9 for be), WALL (5400), SWEEP_ONLY (d: space-separated dataset names)
 set -uo pipefail
 JOB=${JOB:?set JOB}; BRANCH=${BRANCH:-claude/material-science-hyperbolic-benchmarks-cfvr0n}
 POOL=${POOL:-500}; N_EMB=${N_EMB:-500}; NSTRUCT=${NSTRUCT:-600}; MAX_EP=${MAX_EP:-40}; SEEDS3=${SEEDS3:-"0 1 2"}
@@ -23,7 +23,7 @@ S=/root/repo/hyperbolic_materials_benchmarks/scripts
 PKG="numpy scipy numba pandas pyarrow scikit-learn networkx ase mace-torch"
 case $JOB in
   c) PKG="$PKG pymatgen ase-db-backends" ;;
-  d) PKG="$PKG pymatgen rdkit fsspec aiohttp"
+  d) PKG="$PKG pymatgen rdkit fsspec aiohttp emmet-core"
      git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
        git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
   be:*) git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
@@ -71,6 +71,7 @@ work_d() {
   POOL=$POOL python $S/fix_tensor_samples.py >> $L/samples_old.log 2>&1; say "fix_tensor exit $?"
   DEVICE=cuda N_EMB=$N_EMB TAG=_rebuild SKIP_REFS=1 python -W ignore $S/embed_mace.py > $L/mace_old.log 2>&1; say "embed_old exit $?"
   python -c "import pickle; print('\n'.join(k for k, v in pickle.load(open('$D/samples.pkl', 'rb')).items() if v))" > $L/datasets.txt
+  [ -n "${SWEEP_ONLY:-}" ] && printf '%s\n' $SWEEP_ONLY > $L/datasets.txt   # restrict sweeps to these datasets
   for cfg in "HGCN none" "HGCN clip" "HGCN clip+cbound" "GCN none"; do
     while read ds; do echo "$cfg $ds"; done < $L/datasets.txt
   done > $L/sweep_jobs.txt

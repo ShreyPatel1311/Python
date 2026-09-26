@@ -39,7 +39,7 @@ for coll in ("elasticity", "dielectric", "piezoelectric"):
         for line in gzip.GzipFile(fileobj=io.BytesIO(blob)):
             d = json.loads(line)
             rows.append(dict(material_id=d["material_id"], structure=json.dumps(d.get("structure")),
-                             symmetry=d.get("symmetry"), deprecated=bool(d.get("deprecated"))))
+                             symmetry=d.get("symmetry"), deprecated=bool(d.get("deprecated")), chemsys=d.get("chemsys")))
     os.makedirs(coll, exist_ok=True)
     pq.write_table(pa.Table.from_pylist(rows), f"{coll}/data.parquet")
     print(coll, len(keys), "partitions,", len(rows), "rows", flush=True)
