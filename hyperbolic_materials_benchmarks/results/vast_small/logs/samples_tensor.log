@@ -1,0 +1,5 @@
+dielectric 7332 materials; 7310 matched to an MPtrj structure
+dielectric chemsys agreement of matched pairs: 1.0
+piezoelectric 3322 materials; 3313 matched to an MPtrj structure
+piezoelectric chemsys agreement of matched pairs: 1.0
+{'MP-dielectric': 500, 'MP-piezoelectric': 500}

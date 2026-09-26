@@ -51,3 +51,33 @@ Run from a directory other than the repo root (the repo's `queue.py` shadows Pyt
 - HGCN divergence in 14/23 link-prediction runs (double precision + feature standardisation did not remove it).
 - GCN link-prediction baseline run only on MPtrj.
 - Learned-curvature measurement per dataset not yet done.
+
+## Session 2 (2026-09-26): Vast.ai small-subset runs
+Compute: Vast.ai (results returned through the container log, `scripts/vast_job.sh`); total spend $1.29. Raw outputs in
+`results/vast_small/`. Subset sizes: 500 samples per dataset (δ, HGCN graphs), 600 structures / 40 epochs (force models),
+1,500 JARVIS EFG structures; 3 seeds. These are small-run numbers, not converged benchmarks.
+
+Fixes found while running: ASE zeroes FixAtoms forces unless `apply_constraint=False` (OC20); rMD17 file order is not time
+order (pair by `old_indices`); MP 2025-09-25 build collections use numeric IDs, MPtrj alphabetical IDs — converted with
+`emmet.core.mpid.AlphaID` (7310/7332 dielectric, 3313/3322 piezoelectric matched, chemsys agreement 1.0); per-element
+reference energies of elements absent from a 480-structure training split are 0, so force-model test metrics use
+seen-element structures (`test_seen`).
+
+1. **Task c** (`results_main_new.json`, `results_mace_new.json`, `results_null_new.json`, `sensitivity_new.json`):
+   molecular sets have the lowest per-structure δ_rel (MD22 0.22, rMD17 0.21); OC20 / OMat24 / JARVIS 8 Å clusters
+   0.61–0.73. MACE-MP-0 embedding curvature estimate vs permutation null: rMD17 2.90×, MD22 2.52× (pooled 7–10 molecules;
+   not tested whether molecule clusters cause this), JARVIS piezo / dielectric 1.39× / 1.37×, OC20 0.89×, OMat24 0.60–0.82×,
+   JARVIS elastic 0.99×. No energy cliffs (<0.05 Å, >0.1 eV/atom) in MD22 / rMD17 pairs.
+2. **HGCN divergence** (`hgcn_sweep_*`): in all 43 diverged runs a trainable curvature was ≤ 0 at the last finite step
+   (gradient norm 0.015–0.46); gradient clipping alone: 93 % diverged; clipping + curvature bounds [0.01, 100]: 0 %.
+3. **Learned curvature in models with a log₀ readout**: the last curvature cancels (exp and log at the same c), gets no
+   gradient and stays at its initial value; the previous session's "HGCN learned curvature stayed 1.000" (energy
+   regression) is this effect. Only inner-layer curvatures are informative.
+4. **Distance-aware hyperbolic force model vs Euclidean twin vs MACE** (`hf_*`): Euclidean twin ≤ hyperbolic on force MAE
+   on OC20, MP-ALOE, MD22; MACE best on MD22 (0.054 vs 0.204–0.219 eV/Å). Inner curvatures 0.75–1.07. Hyperbolic
+   embeddings move 1.8–5× more per unit displacement (relative to their spread) without lower force error.
+5. **Per-atom tensor targets** (`node_*`, `efgT_*`): JARVIS EFG tensors are in the Cartesian frame of the stored lattice
+   for 89.7 % of orbits with site symmetry. HGCN on atom graphs (EFG eigenvalues, |F|): inner curvatures up to 1.39;
+   equivariant full-tensor EFG model: curvatures 0.74–0.93, Euclidean twin slightly better (tensor MAE 12.27 vs 12.79).
+
+Open: HGCN curvature on graph-level (per-structure) targets per dataset not yet measured.
