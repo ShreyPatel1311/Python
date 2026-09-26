@@ -1,0 +1,1 @@
+{"dataset": "OC20", "model": "MACE", "seed": 2, "n_structures": 600, "n_test": 60, "n_params": 551120, "device": "cuda", "epochs_logged": 40, "train_sec": 482.7, "test": {"E_MAE_per_atom": 0.05593141504323659, "F_MAE": 0.18884005253527864, "F_MAE_free": 0.17589771935010484}}

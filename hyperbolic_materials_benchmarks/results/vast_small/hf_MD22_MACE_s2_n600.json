@@ -1,0 +1,1 @@
+{"dataset": "MD22", "model": "MACE", "seed": 2, "n_structures": 600, "n_test": 60, "n_params": 102320, "device": "cuda", "epochs_logged": 40, "train_sec": 396.2, "test": {"E_MAE_per_atom": 0.006245288429184414, "F_MAE": 0.05368535805820106, "F_MAE_free": 0.05368535805820106}}
