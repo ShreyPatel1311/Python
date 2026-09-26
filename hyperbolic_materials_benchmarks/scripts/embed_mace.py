@@ -10,7 +10,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from run_delta import dataset_level, graph_stats
 from ase import Atoms
 
-N = 1000
+N = int(os.environ.get("N_EMB", 1000))
 out = {}
 rng = np.random.default_rng(0)
 

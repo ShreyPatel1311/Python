@@ -1,79 +1,97 @@
 #!/usr/bin/env bash
-# Vast.ai job (image pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime). SSH is unavailable from the controlling session,
-# so results leave the instance only through the container log: at the end a gzip+base64 archive of every result JSON
-# is printed between RESULTS_B64_BEGIN / RESULTS_B64_END, then the container idles until destroyed.
-# Tracks (run in parallel):
-#   A (CPU): task c (new-dataset samples, delta, sensitivity, MACE-MP-0 embeddings + nulls); task d (rebuild old samples,
-#            MACE-MP-0 embeddings, HGCN link prediction without / with divergence fixes, GCN baselines, 3 seeds)
-#   B (GPU): tasks b+e (hyp_force.py HYP / EUC and mace_baseline.py on MP-ALOE, MatPES, MD22, OC20; 3 seeds)
-# Env: BRANCH, STAGES (default "A B"), MAX_EP (150), NSTRUCT (3000), SEEDS3 ("0 1 2"), GPU_PAR (4), WALL (seconds, 18000)
+# Vast.ai job (image pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime), one instance per JOB:
+#   JOB=c         task c: new-dataset samples, delta, sensitivity, MACE-MP-0 embeddings + permutation nulls
+#   JOB=d         task d: rebuild old samples, MACE-MP-0 embeddings, HGCN link prediction without / with divergence
+#                 fixes and GCN baselines (3 seeds), one process per (config, dataset)
+#   JOB=be:<DS>   tasks b+e on DS in {MP-ALOE, MatPES, MD22, OC20}: hyp_force.py HYP / EUC + mace_baseline.py, 3 seeds
+# SSH is unavailable from the controlling session, so results leave the instance only through the container log:
+# after the work (or at WALL seconds) a gzip+base64 archive of the result JSONs and logs is printed between
+# RESULTS_B64_BEGIN / RESULTS_B64_END; then the container idles until destroyed.
+# Env: JOB, BRANCH, POOL (c/d samples per dataset, 500), N_EMB (500), NSTRUCT (600), MAX_EP (40), SEEDS3 ("0 1 2"),
+#      PAR (parallel processes, 16 for d / 9 for be), WALL (5400)
 set -uo pipefail
-BRANCH=${BRANCH:-claude/material-science-hyperbolic-benchmarks-cfvr0n}
-STAGES=${STAGES:-"A B"}; MAX_EP=${MAX_EP:-150}; NSTRUCT=${NSTRUCT:-3000}; SEEDS3=${SEEDS3:-"0 1 2"}
-GPU_PAR=${GPU_PAR:-4}; WALL=${WALL:-18000}
+JOB=${JOB:?set JOB}; BRANCH=${BRANCH:-claude/material-science-hyperbolic-benchmarks-cfvr0n}
+POOL=${POOL:-500}; N_EMB=${N_EMB:-500}; NSTRUCT=${NSTRUCT:-600}; MAX_EP=${MAX_EP:-40}; SEEDS3=${SEEDS3:-"0 1 2"}
+WALL=${WALL:-5400}
 D=/tmp/claude-0/data; L=/tmp/claude-0/logs; mkdir -p $D $L
-T0=$(date +%s); say() { echo "[$(( $(date +%s) - T0 ))s] $*"; }
+T0=$(date +%s); say() { echo "[$(( $(date +%s) - T0 ))s] $JOB $*"; }
 say "start $(nvidia-smi -L | head -1) cores=$(nproc)"
 apt-get -qq update >/dev/null 2>&1; apt-get -qq install -y git curl unzip xz-utils >/dev/null 2>&1
 git clone -q --depth 1 -b "$BRANCH" https://github.com/ShreyPatel1311/Python /root/repo || { say "clone failed"; sleep 36000; }
 S=/root/repo/hyperbolic_materials_benchmarks/scripts
-git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn && git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch)
-pip install -q numpy scipy numba pandas pyarrow scikit-learn networkx ase pymatgen rdkit fsspec aiohttp mace-torch \
-  ase-db-backends > $L/pip.log 2>&1; say "pip exit $? torch=$(python -c 'import torch;print(torch.__version__, torch.cuda.is_available())')"
+PKG="numpy scipy numba pandas pyarrow scikit-learn networkx ase mace-torch"
+case $JOB in
+  c) PKG="$PKG pymatgen ase-db-backends" ;;
+  d) PKG="$PKG pymatgen rdkit fsspec aiohttp"
+     git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
+       git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
+  be:*) git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
+       git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
+esac
+pip install -q $PKG > $L/pip.log 2>&1; say "pip exit $? torch=$(python -c 'import torch;print(torch.__version__, torch.cuda.is_available())')"
 cd /tmp   # the repo root contains queue.py, which shadows the stdlib module
-bash $S/download_data.sh old new > $L/download.log 2>&1; say "download exit $? $(du -sh $D | cut -f1)"
-export OMP_NUM_THREADS=4 NUMBA_NUM_THREADS=8
+case $JOB in
+  c) ITEMS="new" ;; d) ITEMS="old" ;;
+  be:MP-ALOE) ITEMS="mpaloe" ;; be:MatPES) ITEMS="matpes" ;; be:MD22) ITEMS="md22ac" ;; be:OC20) ITEMS="oc20" ;;
+esac
+bash $S/download_data.sh $ITEMS > $L/download.log 2>&1; say "download exit $? $(du -sh $D | cut -f1)"
+export OMP_NUM_THREADS=4 NUMBA_NUM_THREADS=16
 
-trackA() {
-  python $S/load_samples_new.py 2000 > $L/samples_new.log 2>&1; say "A samples_new exit $?"
-  ( SAMPLES=$D/samples_new.pkl TAG=_new python $S/run_delta.py > $L/delta_new.log 2>&1; say "A delta_new exit $?" ) &
-  python $S/sensitivity_new.py > $L/sens_new.log 2>&1; say "A sensitivity_new exit $?"
-  DEVICE=cuda SAMPLES=$D/samples_new.pkl TAG=_new SKIP_REFS=1 python -W ignore $S/embed_mace.py > $L/mace_new.log 2>&1; say "A embed_new exit $?"
-  ( SAMPLES=$D/samples_new.pkl TAG=_new python $S/null_models.py > $L/null_new.log 2>&1; say "A null_new exit $?" ) &
-  python $S/load_samples.py > $L/samples_old.log 2>&1; say "A samples_old exit $?"
-  python $S/fix_tensor_samples.py >> $L/samples_old.log 2>&1; say "A fix_tensor exit $?"
-  DEVICE=cuda TAG=_rebuild SKIP_REFS=1 python -W ignore $S/embed_mace.py > $L/mace_old.log 2>&1; say "A embed_old exit $?"
-  for cfg in "HGCN none" "HGCN clip" "HGCN clip+cbound" "GCN none"; do
-    set -- $cfg
-    ( FIX=$2 SEEDS=0,1,2 python -W ignore $S/hgcn_sweep.py $1 1 all > $L/sweep_$1_$2.log 2>&1; say "A sweep $1 $2 exit $?" ) &
-  done
-  wait
-}
-
-trackB() {
-  for ds in MP-ALOE MatPES MD22 OC20; do   # build caches + MACE splits once per dataset
-    DEVICE=cuda OUT=$D python -W ignore $S/hyp_force.py $ds EUC 0 0 $NSTRUCT > $L/cache_$ds.log 2>&1
-    DEVICE=cuda OUT=$D EXPORT_XYZ=1 python -W ignore $S/hyp_force.py $ds EUC 0 0 $NSTRUCT >> $L/cache_$ds.log 2>&1
-    say "B cache $ds exit $?"
-  done
-  rm -f $D/hf_*_EUC_s0_n*.json
-  for s in $SEEDS3; do for ds in MP-ALOE MatPES MD22 OC20; do
-    for m in HYP EUC; do echo "hyp_force.py $ds $m $s $MAX_EP $NSTRUCT"; done
-    echo "mace_baseline.py $ds $s $MAX_EP $NSTRUCT"
-  done; done > $L/gpu_jobs.txt
-  cat $L/gpu_jobs.txt | xargs -P $GPU_PAR -I{} bash -c 'set -- {}; DEVICE=cuda OUT='$D' python -W ignore '$S'/$* > '$L'/job_$(echo "$*" | tr " /" "__").log 2>&1; echo "[B] $* exit $?"'
-  say "B done"
-}
-
-PIDS=""
-for st in $STAGES; do
-  case $st in A) trackA & PIDS="$PIDS $!" ;; B) trackB & PIDS="$PIDS $!" ;; esac
-done
-alive() { for p in $PIDS; do kill -0 $p 2>/dev/null && return 0; done; return 1; }
-while alive && [ $(( $(date +%s) - T0 )) -lt $WALL ]; do sleep 30; done
-alive && say "WALL limit reached; emitting partial results" || say "tracks finished"
-python - <<'EOF'
-import base64, glob, gzip, io, json, os, tarfile
+emit() {
+  python - "$1" <<'EOF'
+import base64, glob, io, os, sys, tarfile
 buf = io.BytesIO()
 with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-    for f in sorted(glob.glob("/tmp/claude-0/data/*.json") + glob.glob("/tmp/claude-0/logs/*.log")):
+    for f in sorted(glob.glob("/tmp/claude-0/data/*.json") + glob.glob("/tmp/claude-0/logs/*.log")
+                    + glob.glob("/tmp/claude-0/data/mace_*_s*/train.log")):
         if f.endswith(("pip.log", "download.log")) or os.path.getsize(f) > 20_000_000:
             continue
         tf.add(f, arcname=f.split("/claude-0/")[1])
 b = base64.b64encode(buf.getvalue()).decode()
-print("RESULTS_B64_BEGIN", len(b), flush=True)
+print("RESULTS_B64_BEGIN", len(b), sys.argv[1], flush=True)
 for i in range(0, len(b), 4000):
     print("B64", i // 4000, b[i:i + 4000], flush=True)
-print("RESULTS_B64_END", flush=True)
+print("RESULTS_B64_END", sys.argv[1], flush=True)
 EOF
+}
+
+work_c() {
+  python $S/load_samples_new.py $POOL > $L/samples_new.log 2>&1; say "samples_new exit $?"
+  ( SAMPLES=$D/samples_new.pkl TAG=_new python $S/run_delta.py > $L/delta_new.log 2>&1; say "delta_new exit $?" ) &
+  python $S/sensitivity_new.py > $L/sens_new.log 2>&1; say "sensitivity_new exit $?"
+  DEVICE=cuda N_EMB=$N_EMB SAMPLES=$D/samples_new.pkl TAG=_new SKIP_REFS=1 python -W ignore $S/embed_mace.py > $L/mace_new.log 2>&1
+  say "embed_new exit $?"
+  SAMPLES=$D/samples_new.pkl TAG=_new python $S/null_models.py > $L/null_new.log 2>&1; say "null_new exit $?"
+  wait
+}
+
+work_d() {
+  POOL=$POOL python $S/load_samples.py > $L/samples_old.log 2>&1; say "samples_old exit $?"
+  POOL=$POOL python $S/fix_tensor_samples.py >> $L/samples_old.log 2>&1; say "fix_tensor exit $?"
+  DEVICE=cuda N_EMB=$N_EMB TAG=_rebuild SKIP_REFS=1 python -W ignore $S/embed_mace.py > $L/mace_old.log 2>&1; say "embed_old exit $?"
+  python -c "import pickle; print('\n'.join(k for k, v in pickle.load(open('$D/samples.pkl', 'rb')).items() if v))" > $L/datasets.txt
+  for cfg in "HGCN none" "HGCN clip" "HGCN clip+cbound" "GCN none"; do
+    while read ds; do echo "$cfg $ds"; done < $L/datasets.txt
+  done > $L/sweep_jobs.txt
+  xargs -P ${PAR:-16} -L 1 bash -c 'FIX=$1 SEEDS=0,1,2 python -W ignore '$S'/hgcn_sweep.py $0 1 "$2" "$0_$1_$2" \
+      > '$L'/sweep_$0_$1_$2.log 2>&1; echo "[d] sweep $0 $1 $2 exit $?"' < $L/sweep_jobs.txt
+}
+
+work_be() {
+  ds=$1
+  DEVICE=cuda OUT=$D python -W ignore $S/hyp_force.py $ds EUC 0 0 $NSTRUCT > $L/cache_$ds.log 2>&1
+  DEVICE=cuda OUT=$D EXPORT_XYZ=1 python -W ignore $S/hyp_force.py $ds EUC 0 0 $NSTRUCT >> $L/cache_$ds.log 2>&1
+  say "cache exit $?"; rm -f $D/hf_*_EUC_s0_n*.json
+  for s in $SEEDS3; do
+    for m in HYP EUC; do echo "hyp_force.py $ds $m $s $MAX_EP $NSTRUCT"; done
+    echo "mace_baseline.py $ds $s $MAX_EP $NSTRUCT"
+  done > $L/gpu_jobs.txt
+  xargs -P ${PAR:-9} -I{} bash -c 'set -- {}; DEVICE=cuda OUT='$D' python -W ignore '$S'/$* > '$L'/job_$(echo "$*" | tr " /" "__").log 2>&1; echo "[be] $* exit $?"' < $L/gpu_jobs.txt
+}
+
+case $JOB in c) work_c & ;; d) work_d & ;; be:*) work_be ${JOB#be:} & ;; esac
+WP=$!
+while kill -0 $WP 2>/dev/null && [ $(( $(date +%s) - T0 )) -lt $WALL ]; do sleep 20; done
+kill -0 $WP 2>/dev/null && say "WALL limit reached; emitting partial results" || say "work finished"
+emit final
 say "idle"; sleep 36000

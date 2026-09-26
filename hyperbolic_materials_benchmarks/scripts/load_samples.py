@@ -9,7 +9,7 @@ from pymatgen.core import Structure
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 
 DATA = "/tmp/claude-0/data"
-POOL = 2000
+POOL = int(__import__("os").environ.get("POOL", 2000))
 rng = np.random.default_rng(12345)
 out = {}
 

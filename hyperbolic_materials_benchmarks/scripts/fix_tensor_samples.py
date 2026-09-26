@@ -3,7 +3,7 @@
 import glob, pickle
 import numpy as np, pyarrow.parquet as pq
 
-DATA = "/tmp/claude-0/data"; POOL = 2000
+DATA = "/tmp/claude-0/data"; POOL = int(__import__("os").environ.get("POOL", 2000))
 rng = np.random.default_rng(2024)
 norm = lambda m: "mp-" + (m[3:].lstrip("a") or "a") if m and m.startswith("mp-") else m
 out = pickle.load(open(f"{DATA}/samples.pkl", "rb"))
