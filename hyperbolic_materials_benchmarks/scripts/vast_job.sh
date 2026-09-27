@@ -66,8 +66,8 @@ pip install -q $PKG > $L/pip.log 2>&1; say "pip exit $? torch=$(python -c 'impor
 cd /tmp   # the repo root contains queue.py, which shadows the stdlib module
 case $JOB in
   c) ITEMS="new" ;; d) ITEMS="old" ;; hgcn) ITEMS="mptrj mpcoll oc20 omat jarvis" ;; tensor) ITEMS="jarvis mpaloe matpes" ;; tgraph) ITEMS="mptrj jarvis" ;;
-  sweep) case $SW_DS in MP-*|JARVIS-*) ITEMS="mptrj jarvis" ;; EFG) ITEMS="jarvis" ;; MPtrj:*) ITEMS="mptrj" ;; MatPES*) ITEMS="matpes" ;;
-         MP-ALOE*) ITEMS="mpaloe" ;; OC20:*) ITEMS="oc20" ;; OMat24*) ITEMS="omat" ;; esac ;;
+  sweep) case $SW_DS in MP-ALOE*) ITEMS="mpaloe" ;; MP-*|JARVIS-*) ITEMS="mptrj jarvis" ;; EFG) ITEMS="jarvis" ;; MPtrj:*) ITEMS="mptrj" ;;
+         MatPES*) ITEMS="matpes" ;; OC20:*) ITEMS="oc20" ;; OMat24*) ITEMS="omat" ;; esac ;;
   cdyn) case $CDYN in TREE) ITEMS="none" ;; MPtrj:F) ITEMS="mptrj" ;; *) ITEMS="mptrj jarvis" ;; esac ;;
   atom) ITEMS=$(for d in ${ATOM_DS:-MPtrj:F MPtrj:mag MatPES:mag MatPES:bader MP-ALOE:mag OC20:F OMat24r:F OMat24a:F}; do
           case $d in MPtrj:*) echo mptrj ;; MatPES:*) echo matpes ;; MP-ALOE:*) echo mpaloe ;; OC20:*) echo oc20 ;; OMat24*) echo omat ;; esac
