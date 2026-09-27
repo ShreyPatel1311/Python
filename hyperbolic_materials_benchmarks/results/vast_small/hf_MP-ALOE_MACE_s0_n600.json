@@ -1,0 +1,1 @@
+{"dataset": "MP-ALOE", "model": "MACE", "seed": 0, "n_structures": 600, "n_test": 60, "n_test_seen": 58, "n_params": 735920, "device": "cuda", "epochs_logged": 40, "train_sec": 178.2, "test": null, "test_seen": {"E_MAE_per_atom": 0.783240476094182, "F_MAE": 0.47870984913443837, "F_MAE_free": 0.47870984913443837}}
