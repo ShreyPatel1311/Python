@@ -12,6 +12,11 @@
 #                 MP dielectric / piezoelectric / elasticity, JARVIS elastic / OptB88vdW dielectric), 3 seeds
 #   JOB=tensor    per-atom tensor targets: (1) hgcn_node.py HGCN / GCN on atom graphs, rotation-invariant targets
 #                 (JARVIS EFG eigenvalues, MP-ALOE / MatPES |F|); (2) hyp_efg.py HYP / EUC full EFG tensors; 3 seeds
+#   JOB=sweep     one setting of an HGCN sweep on one dataset (SW_DS; graph-level: MP-dielectric | MP-piezoelectric |
+#                 MP-elasticity | JARVIS-elastic | JARVIS-eps-optB88, 1500 structures, <= 150 epochs; per-atom: EFG | MP-ALOE |
+#                 MatPES | <SRC>:F|mag|bader as in JOB=atom / tensor, <= 60 epochs), 3 seeds, default patience 20:
+#                 SW_KIND=dim  -> embedding size DIM=SW_VAL, HGCN (trainable curvature) and GCN
+#                 SW_KIND=curv -> HGCN with every curvature fixed to C_FIX=SW_VAL (embedding size 64)
 #   JOB=hgcn      HGCN link prediction (FIX=clip+cbound, 3 seeds) on the materials datasets not in task d: MP dielectric /
 #                 piezoelectric, OC20, OMat24 (2 subsets), JARVIS (3 tensor subsets)
 # SSH is unavailable from the controlling session, so results leave the instance only through the container log:
@@ -36,6 +41,9 @@ case $JOB in
   d) PKG="$PKG pymatgen rdkit fsspec aiohttp emmet-core"
      git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
        git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
+  sweep) PKG="$PKG pymatgen emmet-core ase-db-backends"
+     git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
+       git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
   cdyn) PKG="$PKG pymatgen emmet-core"
      git clone -q https://github.com/HazyResearch/hgcn /tmp/claude-0/hgcn && (cd /tmp/claude-0/hgcn &&
        git checkout -q a526385744da25fc880f3da346e17d0fe33817f8 && git apply /root/repo/hyperbolic_materials_benchmarks/hgcn_torch2_compat.patch) ;;
@@ -58,6 +66,8 @@ pip install -q $PKG > $L/pip.log 2>&1; say "pip exit $? torch=$(python -c 'impor
 cd /tmp   # the repo root contains queue.py, which shadows the stdlib module
 case $JOB in
   c) ITEMS="new" ;; d) ITEMS="old" ;; hgcn) ITEMS="mptrj mpcoll oc20 omat jarvis" ;; tensor) ITEMS="jarvis mpaloe matpes" ;; tgraph) ITEMS="mptrj jarvis" ;;
+  sweep) case $SW_DS in MP-*|JARVIS-*) ITEMS="mptrj jarvis" ;; EFG) ITEMS="jarvis" ;; MPtrj:*) ITEMS="mptrj" ;; MatPES*) ITEMS="matpes" ;;
+         MP-ALOE*) ITEMS="mpaloe" ;; OC20:*) ITEMS="oc20" ;; OMat24*) ITEMS="omat" ;; esac ;;
   cdyn) case $CDYN in TREE) ITEMS="none" ;; MPtrj:F) ITEMS="mptrj" ;; *) ITEMS="mptrj jarvis" ;; esac ;;
   atom) ITEMS=$(for d in ${ATOM_DS:-MPtrj:F MPtrj:mag MatPES:mag MatPES:bader MP-ALOE:mag OC20:F OMat24r:F OMat24a:F}; do
           case $d in MPtrj:*) echo mptrj ;; MatPES:*) echo matpes ;; MP-ALOE:*) echo mpaloe ;; OC20:*) echo oc20 ;; OMat24*) echo omat ;; esac
@@ -132,6 +142,21 @@ work_cdyn() {
       python -W ignore '$S'/'$SCRIPT' '$CDYN' HGCN $2 300 > $f 2>&1; e=$?; echo "[cdyn] clr=$0 init=$1 seed=$2 exit $e"; [ $e -ne 0 ] && tail -15 $f | cut -c1-300 | sed "s/^/  | /"; true' < $L/cdyn_jobs.txt
 }
 
+work_sweep() {
+  case $SW_DS in
+    MP-dielectric|MP-piezoelectric|MP-elasticity|JARVIS-elastic|JARVIS-eps-optB88) SCRIPT=hgcn_graph.py; EP=${MAX_EP_G:-150}
+      python -W ignore $S/tensor_targets.py ${N_TT:-1500} > $L/tensor_targets.log 2>&1; say "tensor_targets exit $?" ;;
+    EFG) SCRIPT=hgcn_node.py; EP=${MAX_EP_T:-60}
+      python -W ignore $S/efg_data.py ${N_EFG:-1500} > $L/efg_data.log 2>&1; say "efg_data exit $?" ;;
+    *) SCRIPT=hgcn_node.py; EP=${MAX_EP_A:-60} ;;
+  esac
+  OUT=/tmp NT=${NT:-2} python -W ignore $S/$SCRIPT $SW_DS GCN 0 0 > $L/cache.log 2>&1; say "cache exit $?"
+  case $SW_KIND in dim) MODELS="HGCN GCN"; ENV="DIM=$SW_VAL"; TAGV=_dim$SW_VAL ;; curv) MODELS=HGCN; ENV="C_FIX=$SW_VAL"; TAGV=_cfix$SW_VAL ;; esac
+  for s in $SEEDS3; do for m in $MODELS; do echo "$m $s"; done; done > $L/sweep_jobs.txt
+  xargs -P ${PAR:-6} -L 1 bash -c 'f='$L'/job_$0_s$1'$TAGV'.log; env '$ENV' RUN_TAG='$TAGV' NT=${NT:-2} OUT='$D' \
+      python -W ignore '$S'/'$SCRIPT' '$SW_DS' $0 $1 '$EP' > $f 2>&1; e=$?; echo "[sweep] '$SW_DS' '$SW_KIND'='$SW_VAL' $0 seed=$1 exit $e"; [ $e -ne 0 ] && tail -15 $f | cut -c1-300 | sed "s/^/  | /"; true' < $L/sweep_jobs.txt
+}
+
 work_atom() {
   ATOM_DS=${ATOM_DS:-MPtrj:F MPtrj:mag MatPES:mag MatPES:bader MP-ALOE:mag OC20:F OMat24r:F OMat24a:F}
   for s in $SEEDS3; do for ds in $ATOM_DS; do
@@ -168,7 +193,7 @@ work_be() {
   xargs -P ${PAR:-9} -I{} bash -c 'set -- {}; f='$L'/job_$(echo "$*" | tr " /" "__").log; DEVICE=cuda OUT='$D' python -W ignore '$S'/$* > $f 2>&1; e=$?; echo "[be] $* exit $e"; [ $e -ne 0 ] && tail -15 $f | cut -c1-300 | sed "s/^/  | /"; true' < $L/gpu_jobs.txt
 }
 
-case $JOB in c) work_c & ;; d) work_d & ;; hgcn) work_hgcn & ;; tensor) work_tensor & ;; tgraph) work_tgraph & ;; atom) work_atom & ;; cdyn) work_cdyn & ;; be:*) work_be ${JOB#be:} & ;; esac
+case $JOB in c) work_c & ;; d) work_d & ;; hgcn) work_hgcn & ;; tensor) work_tensor & ;; tgraph) work_tgraph & ;; atom) work_atom & ;; cdyn) work_cdyn & ;; sweep) work_sweep & ;; be:*) work_be ${JOB#be:} & ;; esac
 WP=$!
 while kill -0 $WP 2>/dev/null && [ $(( $(date +%s) - T0 )) -lt $WALL ]; do sleep 20; done
 kill -0 $WP 2>/dev/null && say "WALL limit reached; emitting partial results" || say "work finished"

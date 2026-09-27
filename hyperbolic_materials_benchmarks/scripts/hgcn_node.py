@@ -15,6 +15,7 @@ Usage: hgcn_node.py <EFG|MP-ALOE|MatPES> <HGCN|GCN> <seed> <max_epochs> [n_struc
 Env (curvature-dynamics tests): C_LR (> 0: separate Adam learning rate for the curvature parameters; default: same
 as the other weights, 1e-3), C_INIT (initial value of every trainable curvature, default 1), PATIENCE, RUN_TAG
 (suffix of the output file).
+Env (sweeps): DIM (embedding size of every layer, default 64); C_FIX (> 0: every curvature fixed to C_FIX, not trained).
 """
 import json, os, pickle, sys, time
 import numpy as np, scipy.sparse as sp, torch, torch.nn as nn
@@ -27,6 +28,9 @@ import manifolds
 PATIENCE = int(os.environ.get("PATIENCE", 0)) or None
 C_LR = float(os.environ.get("C_LR", 0)); C_INIT = float(os.environ.get("C_INIT", 1.0))
 RUN_TAG = os.environ.get("RUN_TAG", "")
+DIM = int(os.environ.get("DIM", 64)); C_FIX = float(os.environ.get("C_FIX", 0))
+if C_FIX > 0:
+    C_INIT = C_FIX
 torch.set_default_dtype(torch.float64)
 torch.set_num_threads(int(os.environ.get("NT", "4")))
 DS, MODEL, SEED, MAX_EP = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
@@ -127,7 +131,7 @@ def batch(idx):
 # ------------------------------------------------------------------ model (HGCN repo encoder, as hgcn_energy.py)
 args = parser.parse_args([])
 args.model = MODEL; args.manifold = "PoincareBall" if MODEL == "HGCN" else "Euclidean"
-args.dim, args.num_layers, args.act, args.bias, args.dropout = 64, 3, "relu", 1, 0.0
+args.dim, args.num_layers, args.act, args.bias, args.dropout = DIM, 3, "relu", 1, 0.0
 args.feat_dim, args.task, args.device, args.c = ZMAX, "lp", "cpu", None if MODEL == "HGCN" else 1.0
 args.use_att, args.local_agg, args.n_nodes = 0, 0, 1
 NY = PG[0][3].shape[1]
@@ -154,7 +158,7 @@ net = Net()
 PATIENCE = PATIENCE or _PAT
 with torch.no_grad():
     for c in net.curv():
-        c.fill_(C_INIT)
+        c.fill_(C_INIT); c.requires_grad_(C_FIX <= 0)   # frozen curvature: no gradient, Adam skips it
 cids = {id(c) for c in net.curv()}
 opt = torch.optim.Adam([{"params": [q for q in net.parameters() if id(q) not in cids], "lr": 1e-3},
                         {"params": list(net.curv()), "lr": C_LR if C_LR > 0 else 1e-3}])
@@ -207,5 +211,5 @@ res = dict(dataset=DS, model=MODEL, seed=SEED, n_structures=G, n_train_atoms=int
            curvature_best=[float(c) for c in net.curv()], curvature_last=curv_last,
            curvature_at_bound=[bool(c <= C_MIN + 1e-9 or c >= C_MAX - 1e-9) for c in curv_last], curve=log)
 print("RESULT " + json.dumps({k: v for k, v in res.items() if k != "curve"}), flush=True)
-res.update(c_lr=C_LR or 1e-3, c_init=C_INIT, patience=PATIENCE)
+res.update(c_lr=C_LR or 1e-3, c_init=C_INIT, patience=PATIENCE, dim=DIM, c_fix=C_FIX)
 json.dump(res, open(f"{OUT}/node_{DS.replace(':', '_')}_{MODEL}_s{SEED}{RUN_TAG}.json", "w"))
