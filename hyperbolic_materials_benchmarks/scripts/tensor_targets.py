@@ -14,7 +14,7 @@ lowest-energy/atom MPtrj frame of the same material is used (numeric IDs -> MPtr
 emmet.core.mpid.AlphaID), kept only if nsites and chemsys agree with the collection record.
 Output: /tmp/claude-0/data/tt_<name>.pkl, list of dict(id, Z, pos, cell, y). Usage: tensor_targets.py [n_per_dataset=1500]
 """
-import gzip, io, json, os, re, sys, urllib.request, pickle
+import gzip, io, json, os, re, sys, time, urllib.request, pickle
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
@@ -25,12 +25,22 @@ rng = np.random.default_rng(31)
 ok = lambda v: v not in (None, "na", "", [])
 
 
+def fetch(url, tries=6):   # S3 reads occasionally time out on Vast hosts; retry with backoff
+    for i in range(tries):
+        try:
+            return urllib.request.urlopen(url, timeout=120).read()
+        except Exception as e:
+            if i == tries - 1:
+                raise
+            print(f"retry {i + 1} {url.rsplit('/', 1)[-1]}: {type(e).__name__}", flush=True); time.sleep(5 * 2 ** i)
+
+
 def mp_collection(coll):
-    s = urllib.request.urlopen(f"{B}/?list-type=2&prefix=collections/2025-09-25/{coll}/", timeout=120).read().decode()
+    s = fetch(f"{B}/?list-type=2&prefix=collections/2025-09-25/{coll}/").decode()
     assert "<IsTruncated>false" in s
     keys = sorted(k for k in re.findall("<Key>([^<]*)", s) if k.endswith(".jsonl.gz") and "manifest" not in k)
-    with ThreadPoolExecutor(16) as ex:
-        blobs = list(ex.map(lambda k: urllib.request.urlopen(f"{B}/{k}", timeout=120).read(), keys))
+    with ThreadPoolExecutor(8) as ex:
+        blobs = list(ex.map(lambda k: fetch(f"{B}/{k}"), keys))
     return [json.loads(l) for b in blobs for l in gzip.GzipFile(fileobj=io.BytesIO(b))]
 
 
