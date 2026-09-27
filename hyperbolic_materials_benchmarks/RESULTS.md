@@ -96,5 +96,7 @@ Open: HGCN curvature on graph-level (per-structure) targets per dataset not yet 
   curvature learning rate raised from 1e-3 to 0.05, learned curvature reaches 2.5–9.8 (MPtrj |F|) and 3.0–5.1
   (JARVIS elastic, layer 2); started at 5 it stays at 6–14 / 4–10. Test MAE is unchanged across settings (MPtrj |F|
   0.255 / 0.257 / 0.252 eV/Å; JARVIS elastic 24.07 / 23.91 / 24.69 GPa); the tree control reaches MAE 0.002 at every
-  setting. Learned curvature here reflects optimizer settings, not the dataset, consistent with HGCN Theorem 4.1
+  setting. MP dielectric eigenvalues (1,500 structures): layer-2 curvature at best epoch 1.16–1.24 (lr 1e-3), 2.6–6.6
+  (lr 0.05), 7.5–11.2 (start 5); mean test MAE 33.03 / 32.12 / 29.70 vs mean-predictor baseline 32.09, i.e. HGCN does
+  not beat the mean predictor on the largest eigenvalue (MAE 73.6–99.4 at lr 1e-3/0.05 start 1 vs baseline 73.5). Learned curvature here reflects optimizer settings, not the dataset, consistent with HGCN Theorem 4.1
   (Chami et al. 2019: the same performance is reachable at any curvature by rescaling embeddings).
