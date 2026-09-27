@@ -109,6 +109,10 @@ MP-dielectric c=0.5. No run diverged.
 - HGCN/GCN MAE ratio < 0.9 only at d = 2-4 and only on JARVIS-elastic (0.86 / 0.80), JARVIS-eps-optB88 (0.84 / 0.85),
   MP-elasticity (0.74 / 0.72), MP-dielectric (0.85 at d = 2) and MatPES Bader (0.91 / 0.90); at d >= 8 the ratio is
   0.94-1.11 on every dataset except MP-dielectric (1.24-1.78).
+  Correction: each of these small-size gaps comes from one of the three GCN seeds ending at the mean-predictor MAE
+  (e.g. MP-elasticity d = 2: GCN seeds 21.36 / 21.85 / 43.87, mean predictor 44.04; HGCN 21.23 / 21.27 / 21.90);
+  Welch p = 0.39-0.54 (n = 3). Best HGCN setting vs best GCN setting per dataset: no HGCN advantage with p < 0.3;
+  GCN lower with p < 0.05 on JARVIS-eps-optB88, MP-ALOE |mag| and MatPES |mag| (uncorrected, n = 3).
 - Learned curvature (layers 1-3, best epoch) over all sizes and seeds: 0.01-1.87; none above 2.
 - Fixed curvature: spread of mean MAE across c = 0.1-10 is 0.3-10.2 % (MP-dielectric 15.1 %, seed range 23.4-36.9);
   c = 0.1 gives the lowest MAE on 9 of 16 datasets; on MP-elasticity, JARVIS-elastic and JARVIS-eps-optB88 MAE rises
