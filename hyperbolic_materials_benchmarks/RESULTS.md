@@ -100,3 +100,17 @@ Open: HGCN curvature on graph-level (per-structure) targets per dataset not yet 
   (lr 0.05), 7.5–11.2 (start 5); mean test MAE 33.03 / 32.12 / 29.70 vs mean-predictor baseline 32.09. The two smaller
   eigenvalues beat the mean predictor in 9/9 runs; the largest eigenvalue does not in 7/9 runs (MAE 55.1–99.4 vs 73.5). Learned curvature here reflects optimizer settings, not the dataset, consistent with HGCN Theorem 4.1
   (Chami et al. 2019: the same performance is reachable at any curvature by rescaling embeddings).
+
+### Embedding-size and fixed-curvature sweeps (session 2; `results/vast_small/sweeps/`, 855 JSON files)
+One Vast instance per (dataset, setting), 16 materials datasets, 3 seeds each; embedding size d in {2,4,8,16,32,64}
+(HGCN with trainable curvature vs GCN) and HGCN with every curvature frozen at c in {0.1,0.5,1,2,5,10} (d = 64).
+Same data, splits and training as the `tgraph` / `atom` / `tensor` jobs. Not run (stopped by request): MPtrj:mag d=32,
+MP-dielectric c=0.5. No run diverged.
+- HGCN/GCN MAE ratio < 0.9 only at d = 2-4 and only on JARVIS-elastic (0.86 / 0.80), JARVIS-eps-optB88 (0.84 / 0.85),
+  MP-elasticity (0.74 / 0.72), MP-dielectric (0.85 at d = 2) and MatPES Bader (0.91 / 0.90); at d >= 8 the ratio is
+  0.94-1.11 on every dataset except MP-dielectric (1.24-1.78).
+- Learned curvature (layers 1-3, best epoch) over all sizes and seeds: 0.01-1.87; none above 2.
+- Fixed curvature: spread of mean MAE across c = 0.1-10 is 0.3-10.2 % (MP-dielectric 15.1 %, seed range 23.4-36.9);
+  c = 0.1 gives the lowest MAE on 9 of 16 datasets; on MP-elasticity, JARVIS-elastic and JARVIS-eps-optB88 MAE rises
+  with c (17.82 -> 19.60, 23.51 -> 25.28, 32.64 -> 33.81 at c = 0.1 -> 10).
+- Per-element-mean baseline beats every HGCN / GCN setting on EFG, |magmom| (MPtrj, MatPES, MP-ALOE) and Bader charge.
